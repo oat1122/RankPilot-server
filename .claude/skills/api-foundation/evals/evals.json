@@ -1,0 +1,23 @@
+{
+  "skill_name": "api-foundation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "เพิ่ม endpoint POST /keywords สำหรับสร้าง keyword ใหม่ใน RankPilot server — รับ body { term, projectId } แล้วบันทึก พร้อม validate input",
+      "expected_output": "สร้าง domain module ใหม่ (keywords.module.ts + keywords.controller.ts + dto ด้วย createZodDto), register module เข้า app.module.ts, controller มี @ApiTags/@ApiResponse, validate body ด้วย Zod DTO ไม่ใช่ class-validator, controller บาง logic อยู่ service",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "ผม need ให้ /keywords/:id/enrich ไปดึงข้อมูลจาก Ahrefs แล้วอัปเดต keyword — Ahrefs call ใช้เวลานานหน่อย ทำยังไงดีใน api นี้",
+      "expected_output": "อธิบายกฎ api ≠ worker (เอกสาร 00 §4): งานหนัก/ยาวต้อง enqueue BullMQ ให้ worker ไม่รันใน request thread; controller แค่ validate + enqueue + คืน jobId; ระบุว่า Redis/BullModule ยังไม่ wire (Phase 1) + ต้องเพิ่ม AHREFS_API_KEY ใน envSchema อ่านผ่าน ConfigService",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "review controller ตัวนี้ให้หน่อย: มันใช้ @IsString() จาก class-validator, อ่าน key ด้วย process.env.AHREFS_API_KEY, แล้วเรียก axios ไป Ahrefs ตรง ๆ ใน method ของ controller",
+      "expected_output": "ชี้ 3 ปัญหา: (1) class-validator → ต้อง createZodDto; (2) process.env ตรง → ConfigService + เพิ่มใน envSchema; (3) call ภายนอก/งานหนักใน request thread + logic ใน controller → ย้ายไป service และ enqueue ให้ worker; แนะนำเติม Swagger decorator ถ้าขาด",
+      "files": []
+    }
+  ]
+}

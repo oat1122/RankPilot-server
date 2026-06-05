@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { BullModule } from '@nestjs/bullmq';
 import { ZodValidationPipe } from 'nestjs-zod';
 import { validateEnv } from './config/env';
+import { bullRootAsyncOptions } from './queue/bull.config';
 import { HealthModule } from './health/health.module';
+import { CrawlModule } from './crawl/crawl.module';
 
 @Module({
   imports: [
@@ -12,7 +15,10 @@ import { HealthModule } from './health/health.module';
       cache: true,
       validate: validateEnv,
     }),
+    // BullMQ root (Redis) — api เป็น producer; consumer อยู่ใน worker (เอกสาร 00 §4)
+    BullModule.forRootAsync(bullRootAsyncOptions),
     HealthModule,
+    CrawlModule,
   ],
   providers: [
     // validate ทุก request ที่ใช้ createZodDto ทั่วแอป (เอกสาร 04 §6)

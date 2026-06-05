@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Env schema — ขั้น setup เท่านั้น (เอกสาร 04 §5 / 05 §4).
- * DATABASE_URL / REDIS_URL ยัง optional ∵ ยังไม่เชื่อมต่อจริง (ยังไม่มีฟีเจอร์).
+ * Env schema — fail-fast ตอน boot (เอกสาร 04 §5 / 05 §4).
  * ใช้ Zod ตัวเดียวกับ DTO/LangGraph ตาม convention (เอกสาร 00 §1).
  */
 export const envSchema = z.object({
@@ -11,9 +10,18 @@ export const envSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
-  // ยังไม่ใช้งานในขั้น setup — ใส่ไว้รอ Phase 1
+  // DATABASE_URL ยัง optional ∵ ยังไม่เชื่อม DB (Phase 1 — เอกสาร 01)
   DATABASE_URL: z.string().optional(),
-  REDIS_URL: z.string().optional(),
+  // REDIS_URL required แล้ว ∵ wire BullMQ queue 'crawl' (เอกสาร 03 §1 / 04 §5)
+  REDIS_URL: z.string().min(1, 'REDIS_URL is required (BullMQ)'),
+
+  // Crawler bot tunables (worker — เอกสาร 00 §0 [1] / 01 page_snapshots)
+  CRAWLER_USER_AGENT: z
+    .string()
+    .default('RankPilotBot/0.1 (+https://rankpilot.app/bot)'),
+  CRAWLER_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  CRAWLER_MAX_BYTES: z.coerce.number().int().positive().default(5_000_000),
+  CRAWLER_MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(5),
 });
 
 export type Env = z.infer<typeof envSchema>;

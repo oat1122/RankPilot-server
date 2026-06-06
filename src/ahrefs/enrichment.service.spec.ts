@@ -5,7 +5,7 @@ import type {
   EnrichKeywordsJobData,
   TopPagesJobData,
 } from './enrichment.service';
-import type { AhrefsClient } from './ahrefs.client';
+import type { AhrefsClient } from './client/ahrefs.client';
 import type { AhrefsRepo } from './ahrefs.repo';
 
 function makeService() {

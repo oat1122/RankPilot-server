@@ -7,8 +7,8 @@ import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 import { AhrefsRepo } from '../ahrefs/ahrefs.repo';
 import type { ProjectRow } from '../ahrefs/ahrefs.repo';
-import { BudgetGuard } from '../ahrefs/budget.guard';
-import { currentPeriod } from '../ahrefs/period';
+import { BudgetGuard } from '../ahrefs/budget/budget.guard';
+import { currentPeriod } from '../ahrefs/budget/period';
 import type {
   EnrichOrganicJobData,
   EnrichKeywordsJobData,

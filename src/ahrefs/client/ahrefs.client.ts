@@ -4,12 +4,12 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { createHash } from 'node:crypto';
 import type { AxiosResponse } from 'axios';
-import { AppException, ErrorCode } from '../common/http';
-import { estimateUnits } from './cost';
-import { currentPeriod } from './period';
-import { BudgetGuard } from './budget.guard';
+import { AppException, ErrorCode } from '../../common/http';
+import { estimateUnits } from '../budget/cost';
+import { currentPeriod } from '../budget/period';
+import { BudgetGuard } from '../budget/budget.guard';
 import { CacheLayer } from './cache.layer';
-import { AhrefsRepo } from './ahrefs.repo';
+import { AhrefsRepo } from '../ahrefs.repo';
 import { extractRowArray } from './rows';
 
 /** input ของ 1 Ahrefs request ที่ผ่านทุกชั้น (cache→budget→http→settle). */

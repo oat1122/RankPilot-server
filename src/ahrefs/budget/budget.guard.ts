@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { AppException, ErrorCode } from '../common/http';
-import { REDIS } from '../redis/redis.module';
-import type { RedisClient } from '../redis/redis.module';
+import { AppException, ErrorCode } from '../../common/http';
+import { REDIS } from '../../redis/redis.module';
+import type { RedisClient } from '../../redis/redis.module';
 
 /** TTL ของ counter เดือน — 40 วัน (ครอบเดือน + grace ก่อน reconcile, เอกสาร 03 §5). */
 const RESERVE_TTL_SEC = 60 * 60 * 24 * 40;

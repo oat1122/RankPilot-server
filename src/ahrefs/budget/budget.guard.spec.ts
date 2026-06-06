@@ -1,6 +1,6 @@
 import { BudgetGuard } from './budget.guard';
-import { ErrorCode } from '../common/http';
-import type { RedisClient } from '../redis/redis.module';
+import { ErrorCode } from '../../common/http';
+import type { RedisClient } from '../../redis/redis.module';
 
 /** mock raw ioredis client — เฉพาะ command ที่ BudgetGuard ใช้ (reserve = eval Lua). */
 function makeRedis() {

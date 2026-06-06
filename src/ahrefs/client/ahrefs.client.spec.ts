@@ -4,10 +4,10 @@ import type { ConfigService } from '@nestjs/config';
 import type { AxiosResponse } from 'axios';
 import { AhrefsClient } from './ahrefs.client';
 import type { AhrefsFetchOptions } from './ahrefs.client';
-import { ErrorCode } from '../common/http';
-import type { BudgetGuard } from './budget.guard';
+import { ErrorCode } from '../../common/http';
+import type { BudgetGuard } from '../budget/budget.guard';
 import type { CacheLayer } from './cache.layer';
-import type { AhrefsRepo } from './ahrefs.repo';
+import type { AhrefsRepo } from '../ahrefs.repo';
 
 function makeResponse(
   data: unknown,

@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { REDIS } from '../redis/redis.module';
-import type { RedisClient } from '../redis/redis.module';
-import { AhrefsRepo } from './ahrefs.repo';
-import type { UpsertCacheInput } from './ahrefs.repo';
+import { REDIS } from '../../redis/redis.module';
+import type { RedisClient } from '../../redis/redis.module';
+import { AhrefsRepo } from '../ahrefs.repo';
+import type { UpsertCacheInput } from '../ahrefs.repo';
 
 /** TTL ของ hot cache (Redis) — เพดาน 1 ชม. (เอกสาร 03 §6); durable อยู่ที่ ahrefs_cache. */
 const HOT_TTL_SEC = 3600;

@@ -3,9 +3,9 @@ import { HttpModule } from '@nestjs/axios';
 import { DbModule } from '../db/db.module';
 import { RedisModule } from '../redis/redis.module';
 import { AhrefsRepo } from './ahrefs.repo';
-import { BudgetGuard } from './budget.guard';
-import { CacheLayer } from './cache.layer';
-import { AhrefsClient } from './ahrefs.client';
+import { BudgetGuard } from './budget/budget.guard';
+import { CacheLayer } from './client/cache.layer';
+import { AhrefsClient } from './client/ahrefs.client';
 import { EnrichmentService } from './enrichment.service';
 
 /**

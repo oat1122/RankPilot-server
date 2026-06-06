@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { urlHashOrNull } from '../common/url';
-import { extractRowArray } from './rows';
-import { AhrefsClient } from './ahrefs.client';
+import { extractRowArray } from './client/rows';
+import { AhrefsClient } from './client/ahrefs.client';
 import { AhrefsRepo } from './ahrefs.repo';
-import { periodSnapshotDate } from './period';
+import { periodSnapshotDate } from './budget/period';
 
 /** payload ของ job 'enrich-organic' (queue 'ahrefs') — producer เตรียมให้ครบ. */
 export interface EnrichOrganicJobData {

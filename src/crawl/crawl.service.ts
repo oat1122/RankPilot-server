@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import type { CreateCrawlDto } from './dto/create-crawl.dto';
 import type { CrawlResult } from '../crawler/crawler.schema';
+import { AppException, ErrorCode } from '../common/http';
 
 /** payload + ผลของ queue 'crawl' — typed เพื่อให้ job.data/returnvalue ไม่เป็น any */
 type CrawlJobData = { url: string };
@@ -33,7 +34,12 @@ export class CrawlService implements OnModuleInit {
 
   async status(jobId: string) {
     const job = await this.queue.getJob(jobId);
-    if (!job) throw new NotFoundException(`crawl job ${jobId} not found`);
+    // throw ด้วย code กลาง → FE ได้ error.code='CRAWL_JOB_NOT_FOUND' คงที่ (เอกสาร 04 §6)
+    if (!job)
+      throw new AppException(
+        ErrorCode.CRAWL_JOB_NOT_FOUND,
+        `crawl job ${jobId} not found`,
+      );
     const state = await job.getState();
     return {
       jobId: job.id,

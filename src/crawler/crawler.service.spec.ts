@@ -174,6 +174,35 @@ describe('CrawlerService', () => {
     });
   });
 
+  describe('crawl() — wordCount ภาษาไทย (ไม่มีช่องว่างคั่นคำ)', () => {
+    // เอกสาร 01 page_snapshots.word_count เป็น metric SEO จริง และระบบเป็น Thai SEO.
+    // ไทยไม่เว้นวรรคระหว่างคำ → split(' ') นับทั้งย่อหน้าเป็น 1 คำ (ผิด).
+    // ต้องใช้การตัดคำ (Intl.Segmenter) ให้ได้จำนวนคำจริง.
+    it('นับคำไทยที่ติดกันด้วยการตัดคำ ไม่ใช่นับช่องว่าง', async () => {
+      const service = makeService(
+        makeResponse(
+          '<html><body><p>ผมชอบกินข้าวเช้านี้</p></body></html>',
+          'text/html',
+        ),
+      );
+      const result = await service.crawl('https://example.com/th');
+      // ผม|ชอบ|กิน|ข้าว|เช้า|นี้ = 6 คำ ; split(' ') เดิมจะได้ 1
+      expect(result.wordCount).toBe(6);
+    });
+
+    it('นับคำไทยปนอังกฤษได้ถูก (ตัดคำไทย + แยกคำอังกฤษ)', async () => {
+      const service = makeService(
+        makeResponse(
+          '<html><body><p>SEO คือการทำเว็บ</p></body></html>',
+          'text/html',
+        ),
+      );
+      const result = await service.crawl('https://example.com/mix');
+      // SEO | คือ | การ | ทำ | เว็บ = 5 คำ ; split(' ') เดิมจะได้ 2
+      expect(result.wordCount).toBe(5);
+    });
+  });
+
   describe('crawl() — normalizeUrl scheme handling', () => {
     // เติม https:// เฉพาะ bare domain; scheme อื่น (ftp/file/ws) ต้อง reject ไม่ใช่ mangle
     it.each([

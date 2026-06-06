@@ -39,6 +39,11 @@ type ParsedPage = Pick<
 export class CrawlerService {
   private readonly logger = new Logger(CrawlerService.name);
 
+  // ตัดคำด้วย ICU (Intl.Segmenter) — สร้างครั้งเดียว reuse ได้ (stateless)
+  private readonly wordSegmenter = new Intl.Segmenter('th', {
+    granularity: 'word',
+  });
+
   constructor(
     private readonly http: HttpService,
     private readonly config: ConfigService,
@@ -122,7 +127,7 @@ export class CrawlerService {
     // body text หลังตัด script/style/noscript/template เพื่อไม่ให้ปนคำใน wordCount/hash
     $('script, style, noscript, template').remove();
     const bodyText = this.collapse($('body').text());
-    const wordCount = bodyText ? bodyText.split(' ').length : 0;
+    const wordCount = this.countWords(bodyText);
 
     return {
       title: this.textOrNull($('head > title').first().text()),
@@ -234,6 +239,21 @@ export class CrawlerService {
 
   private collapse(s: string): string {
     return s.replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * นับจำนวนคำแบบรองรับหลายภาษา (เอกสาร 01 page_snapshots.word_count).
+   * ใช้ตัดคำของ ICU ∵ ไทย/ญี่ปุ่น/จีน ไม่เว้นวรรคระหว่างคำ — split(' ') จะนับ
+   * ทั้งย่อหน้าเป็น 1 คำ ทำให้ metric SEO ผิด. นับเฉพาะ segment ที่เป็นคำจริง
+   * (isWordLike) → ข้ามช่องว่าง/เครื่องหมายวรรคตอน; ยังแยกคำอังกฤษได้ถูกด้วย.
+   */
+  private countWords(text: string): number {
+    if (!text) return 0;
+    let count = 0;
+    for (const seg of this.wordSegmenter.segment(text)) {
+      if (seg.isWordLike) count += 1;
+    }
+    return count;
   }
 
   private textOrNull(s: string): string | null {

@@ -5,6 +5,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { ZodValidationPipe } from 'nestjs-zod';
 import { validateEnv } from './config/env';
 import { bullRootAsyncOptions } from './queue/bull.config';
+import { CommonModule } from './common/common.module';
 import { HealthModule } from './health/health.module';
 import { CrawlModule } from './crawl/crawl.module';
 
@@ -17,6 +18,8 @@ import { CrawlModule } from './crawl/crawl.module';
     }),
     // BullMQ root (Redis) — api เป็น producer; consumer อยู่ใน worker (เอกสาร 00 §4)
     BullModule.forRootAsync(bullRootAsyncOptions),
+    // ชั้นกลาง FE↔BE: response envelope + error filter (เอกสาร 04 §6)
+    CommonModule,
     HealthModule,
     CrawlModule,
   ],

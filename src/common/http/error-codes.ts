@@ -29,6 +29,9 @@ export const ErrorCode = {
   AHREFS_RATE_LIMITED: 'AHREFS_RATE_LIMITED', // Ahrefs ตอบ 429
   AHREFS_UNAUTHORIZED: 'AHREFS_UNAUTHORIZED', // key หาย/ผิด (401/403)
   AHREFS_API_ERROR: 'AHREFS_API_ERROR', // upstream ล้ม (5xx/อื่น ๆ)
+  // Analysis (เอกสาร 04 §7) — stage [3] วิเคราะห์ crawl/enrich → seo_scores + audit_findings
+  ANALYSIS_JOB_NOT_FOUND: 'ANALYSIS_JOB_NOT_FOUND', // jobId ที่ขอสถานะไม่มีใน queue 'analysis'
+  ANALYSIS_NO_CRAWL: 'ANALYSIS_NO_CRAWL', // โปรเจคยังไม่มี crawl ให้วิเคราะห์ (ต้อง crawl ก่อน)
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -52,6 +55,8 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   AHREFS_RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
   AHREFS_UNAUTHORIZED: HttpStatus.UNAUTHORIZED,
   AHREFS_API_ERROR: HttpStatus.BAD_GATEWAY,
+  ANALYSIS_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  ANALYSIS_NO_CRAWL: HttpStatus.UNPROCESSABLE_ENTITY,
 };
 
 /** ข้อความ default ต่อ code (override ได้ตอน throw). */
@@ -73,6 +78,8 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   AHREFS_RATE_LIMITED: 'Ahrefs API rate limited',
   AHREFS_UNAUTHORIZED: 'Ahrefs API key missing or invalid',
   AHREFS_API_ERROR: 'Ahrefs API request failed',
+  ANALYSIS_JOB_NOT_FOUND: 'Analysis job not found',
+  ANALYSIS_NO_CRAWL: 'No crawl available to analyze — run a crawl first',
 };
 
 /** lookup: HTTP status → ErrorCode (เฉพาะที่ map ตรง ๆ ได้). */

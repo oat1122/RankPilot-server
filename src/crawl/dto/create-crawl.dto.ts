@@ -14,6 +14,9 @@ export const createCrawlSchema = z.object({
     .refine((u) => /^https?:\/\//i.test(u), {
       message: 'url ต้องเป็น http:// หรือ https:// เท่านั้น',
     }),
+  // optional — ถ้าระบุ worker จะ persist (pages/page_snapshots/page_links) ให้ stage [3]
+  // Analysis ใช้ต่อ; ไม่ระบุ = crawl เปล่า ๆ (คืนผลเฉย ๆ ไม่เขียน DB) backward-compat.
+  projectId: z.coerce.number().int().positive().optional(),
 });
 
 export class CreateCrawlDto extends createZodDto(createCrawlSchema) {}

@@ -21,4 +21,28 @@ describe('createCrawlSchema', () => {
     expect(accepts('not a url')).toBe(false);
     expect(accepts('')).toBe(false);
   });
+
+  it('projectId optional — ไม่ส่งก็ผ่าน (backward-compat)', () => {
+    const r = createCrawlSchema.safeParse({ url: 'https://example.com' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.projectId).toBeUndefined();
+  });
+
+  it('projectId coerce เป็น int บวก', () => {
+    const r = createCrawlSchema.safeParse({
+      url: 'https://example.com',
+      projectId: '7',
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.projectId).toBe(7);
+    // ปฏิเสธค่าที่ไม่ใช่ int บวก
+    expect(
+      createCrawlSchema.safeParse({ url: 'https://example.com', projectId: 0 })
+        .success,
+    ).toBe(false);
+    expect(
+      createCrawlSchema.safeParse({ url: 'https://example.com', projectId: -3 })
+        .success,
+    ).toBe(false);
+  });
 });

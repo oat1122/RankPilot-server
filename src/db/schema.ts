@@ -115,6 +115,7 @@ export const pageSnapshots = mysqlTable(
     metaDescription: varchar('meta_description', { length: 1024 }),
     h1: varchar('h1', { length: 1024 }),
     headings: json('headings'), // {h1:[],h2:[],h3:[]}
+    paragraphs: json('paragraphs'), // ['ย่อหน้า 1', ...] จาก <p> — โครงสร้าง/intro สำหรับ keyword coverage (para1) + วิเคราะห์เนื้อหา (เอกสาร 01 §2)
     wordCount: int('word_count').notNull().default(0),
     canonical: varchar('canonical', { length: 2048 }),
     robotsMeta: varchar('robots_meta', { length: 255 }),

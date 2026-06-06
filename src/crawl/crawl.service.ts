@@ -8,8 +8,9 @@ import type { CrawlResult } from '../crawler/crawler.schema';
 import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 
-/** payload + ผลของ queue 'crawl' — typed เพื่อให้ job.data/returnvalue ไม่เป็น any */
-type CrawlJobData = { url: string };
+/** payload + ผลของ queue 'crawl' — typed เพื่อให้ job.data/returnvalue ไม่เป็น any.
+ *  projectId optional: ถ้ามี worker จะ persist ผลลง DB (เอกสาร 04 §7 step 2). */
+type CrawlJobData = { url: string; projectId?: number };
 type CrawlQueue = Queue<CrawlJobData, CrawlResult>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม */
@@ -55,7 +56,7 @@ export class CrawlService implements OnModuleInit {
       this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
     try {
       const job = await withTimeout(
-        this.queue.add('crawl-url', { url: dto.url }),
+        this.queue.add('crawl-url', { url: dto.url, projectId: dto.projectId }),
         timeoutMs,
       );
       return { jobId: job.id, status: 'queued' as const };

@@ -7,11 +7,14 @@ import { CrawlerModule } from '../crawler/crawler.module';
 import { CrawlProcessor } from './crawl.processor';
 import { AhrefsModule } from '../ahrefs/ahrefs.module';
 import { AhrefsProcessor } from './ahrefs.processor';
+import { AnalysisEngineModule } from '../analysis/analysis.engine.module';
+import { AnalysisProcessor } from './analysis.processor';
 
 /**
  * Root module ของ worker process (apps/worker ในอนาคต — เอกสาร 04 §0).
  * แยกจาก AppModule (api) โดยสิ้นเชิง: ที่นี่เท่านั้นที่ register WorkerHost (consumer).
- * consumer: 'crawl' (CrawlProcessor) + 'ahrefs' (AhrefsProcessor, เอกสาร 03 §5).
+ * consumer: 'crawl' (CrawlProcessor) + 'ahrefs' (AhrefsProcessor) + 'analysis'
+ * (AnalysisProcessor, stage [3] เอกสาร 04 §7).
  */
 @Module({
   imports: [
@@ -23,9 +26,11 @@ import { AhrefsProcessor } from './ahrefs.processor';
     BullModule.forRootAsync(bullRootAsyncOptions),
     BullModule.registerQueue({ name: 'crawl' }),
     BullModule.registerQueue({ name: 'ahrefs' }),
+    BullModule.registerQueue({ name: 'analysis' }),
     CrawlerModule,
     AhrefsModule,
+    AnalysisEngineModule,
   ],
-  providers: [CrawlProcessor, AhrefsProcessor],
+  providers: [CrawlProcessor, AhrefsProcessor, AnalysisProcessor],
 })
 export class WorkerModule {}

@@ -24,6 +24,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
     "db:vector:check": "tsx --env-file=.env src/db/vector-smoke.ts",
+    "db:seed:analysis": "tsx --env-file=.env src/db/seed-analysis.ts",
     "ahrefs:limits": "tsx --env-file=.env src/ahrefs/limits-check.ts"
   },
   "dependencies": {

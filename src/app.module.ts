@@ -9,6 +9,7 @@ import { CommonModule } from './common/common.module';
 import { HealthModule } from './health/health.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { EnrichModule } from './enrich/enrich.module';
+import { AnalysisModule } from './analysis/analysis.module';
 
 @Module({
   imports: [
@@ -25,6 +26,8 @@ import { EnrichModule } from './enrich/enrich.module';
     CrawlModule,
     // Ahrefs Enrichment [2] (producer) — POST/GET /projects/:id/ahrefs/* (เอกสาร 03)
     EnrichModule,
+    // Analysis [3] (producer) — POST/GET /projects/:id/analysis/* (เอกสาร 04 §7)
+    AnalysisModule,
   ],
   providers: [
     // validate ทุก request ที่ใช้ createZodDto ทั่วแอป (เอกสาร 04 §6)

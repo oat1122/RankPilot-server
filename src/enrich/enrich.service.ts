@@ -13,25 +13,45 @@ import type {
   EnrichOrganicJobData,
   EnrichKeywordsJobData,
   TopPagesJobData,
+  CompetitorsJobData,
+  SerpOverviewJobData,
+  KeywordIdeasJobData,
+  BacklinksJobData,
   EnrichmentSummary,
   KeywordOverviewSummary,
   TopPagesSummary,
+  CompetitorsSummary,
+  SerpOverviewSummary,
+  KeywordIdeasSummary,
+  BacklinksSummary,
 } from '../ahrefs/enrichment.service';
 import type {
   CreateEnrichDto,
   EnrichKeywordsDto,
   TopPagesDto,
+  CompetitorsDto,
+  SerpOverviewDto,
+  KeywordIdeasDto,
+  BacklinksDto,
 } from './dto/create-enrich.dto';
 
 /** ทุก job ของ queue 'ahrefs' (แยกด้วย job.name) — producer/consumer ใช้ชุดเดียวกัน. */
 type AhrefsJobData =
   | EnrichOrganicJobData
   | EnrichKeywordsJobData
-  | TopPagesJobData;
+  | TopPagesJobData
+  | CompetitorsJobData
+  | SerpOverviewJobData
+  | KeywordIdeasJobData
+  | BacklinksJobData;
 type AhrefsJobResult =
   | EnrichmentSummary
   | KeywordOverviewSummary
-  | TopPagesSummary;
+  | TopPagesSummary
+  | CompetitorsSummary
+  | SerpOverviewSummary
+  | KeywordIdeasSummary
+  | BacklinksSummary;
 type EnrichQueue = Queue<AhrefsJobData, AhrefsJobResult>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม */
@@ -40,6 +60,10 @@ const QUEUE_ERROR_LOG_THROTTLE_MS = 10_000;
 const DEFAULT_LIMIT = 10;
 /** default หน้าที่ดึงจาก top-pages ก่อนคัด top 20% (เอกสาร 03a §4.2). */
 const DEFAULT_TOPPAGES_LIMIT = 100;
+/** default limit ของ Tier 2-3 ที่เหลือ (competitors/serp/ideas — เอกสาร 03a §4.3/§5). */
+const DEFAULT_COMPETITORS_LIMIT = 10;
+const DEFAULT_SERP_LIMIT = 10;
+const DEFAULT_IDEAS_LIMIT = 50;
 
 /**
  * EnrichService (api side) — บางตามกฎ api ≠ worker (เอกสาร 00 §4): โหลด project,
@@ -106,8 +130,61 @@ export class EnrichService implements OnModuleInit {
       country: this.countryOf(project, dto.country),
       limit: dto.limit ?? DEFAULT_TOPPAGES_LIMIT,
       cap: this.capOf(project),
+      enrichSelected: dto.enrichSelected ?? false, // true → worker fan-out per-page organic
     };
     return this.addJob('top-pages', data, projectId);
+  }
+
+  /** enqueue organic-competitors (job 'competitors' — เอกสาร 03a §4.3). */
+  async enqueueCompetitors(projectId: number, dto: CompetitorsDto) {
+    const project = await this.loadProject(projectId);
+    const data: CompetitorsJobData = {
+      projectId,
+      domain: project.domain,
+      country: this.countryOf(project, dto.country),
+      limit: dto.limit ?? DEFAULT_COMPETITORS_LIMIT,
+      cap: this.capOf(project),
+    };
+    return this.addJob('competitors', data, projectId);
+  }
+
+  /** enqueue serp-overview ของ 1 keyword (job 'serp-overview' — เอกสาร 03a §5). */
+  async enqueueSerp(projectId: number, dto: SerpOverviewDto) {
+    const project = await this.loadProject(projectId);
+    const data: SerpOverviewJobData = {
+      projectId,
+      keyword: dto.keyword,
+      country: this.countryOf(project, dto.country),
+      limit: dto.limit ?? DEFAULT_SERP_LIMIT,
+      cap: this.capOf(project),
+    };
+    return this.addJob('serp-overview', data, projectId);
+  }
+
+  /** enqueue matching/related-terms (job 'keyword-ideas' — เอกสาร 03a §5). */
+  async enqueueIdeas(projectId: number, dto: KeywordIdeasDto) {
+    const project = await this.loadProject(projectId);
+    const data: KeywordIdeasJobData = {
+      projectId,
+      seed: dto.seed,
+      country: this.countryOf(project, dto.country),
+      limit: dto.limit ?? DEFAULT_IDEAS_LIMIT,
+      cap: this.capOf(project),
+      mode: dto.mode ?? 'matching',
+    };
+    return this.addJob('keyword-ideas', data, projectId);
+  }
+
+  /** enqueue site-explorer metrics/DR/backlinks (job 'backlinks' — เอกสาร 03a §6). */
+  async enqueueBacklinks(projectId: number, dto: BacklinksDto) {
+    const project = await this.loadProject(projectId);
+    const data: BacklinksJobData = {
+      projectId,
+      domain: project.domain,
+      country: this.countryOf(project, dto.country),
+      cap: this.capOf(project),
+    };
+    return this.addJob('backlinks', data, projectId);
   }
 
   async status(jobId: string) {
@@ -175,7 +252,14 @@ export class EnrichService implements OnModuleInit {
    * ไม่ reject เอง → ตอบ 503 เร็ว ๆ แทนปล่อย request ค้างจน client abort (เอกสาร 00 §4).
    */
   private async addJob(
-    name: 'enrich-organic' | 'enrich-keywords' | 'top-pages',
+    name:
+      | 'enrich-organic'
+      | 'enrich-keywords'
+      | 'top-pages'
+      | 'competitors'
+      | 'serp-overview'
+      | 'keyword-ideas'
+      | 'backlinks',
     data: AhrefsJobData,
     projectId: number,
   ) {

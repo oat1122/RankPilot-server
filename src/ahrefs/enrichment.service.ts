@@ -4,6 +4,7 @@ import { urlHashOrNull } from '../common/url';
 import { extractRowArray } from './client/rows';
 import { AhrefsClient } from './client/ahrefs.client';
 import { AhrefsRepo } from './ahrefs.repo';
+import type { InsertSerpResultInput } from './ahrefs.repo';
 import { periodSnapshotDate } from './budget/period';
 
 /** payload ของ job 'enrich-organic' (queue 'ahrefs') — producer เตรียมให้ครบ. */
@@ -13,6 +14,8 @@ export interface EnrichOrganicJobData {
   country: string;
   limit: number;
   cap: number; // เพดาน units/เดือน (resolve ตอน enqueue)
+  target?: string; // เป้าเฉพาะ URL (orchestration top-pages → exact); default = domain
+  mode?: string; // organic-keywords mode: exact|prefix|domain|subdomains (เอกสาร 03a §3)
 }
 
 /** สรุปผล enrich — เก็บเป็น job.returnvalue ให้ api อ่านผ่าน GET status. */
@@ -52,6 +55,7 @@ export interface TopPagesJobData {
   country: string;
   limit: number;
   cap: number;
+  enrichSelected?: boolean; // true = worker fan-out per-page organic (mode=exact) ต่อ
 }
 
 /** 1 หน้าใน top-pages selection (top 20% by traffic). */
@@ -68,6 +72,87 @@ export interface TopPagesSummary {
   fetched: number; // หน้าทั้งหมดที่ Ahrefs คืน
   topCount: number; // จำนวนหน้าที่คัด (top 20%)
   topPages: TopPage[];
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** payload ของ job 'competitors' (organic-competitors — เอกสาร 03a §4.3). */
+export interface CompetitorsJobData {
+  projectId: number;
+  domain: string;
+  country: string;
+  limit: number;
+  cap: number;
+}
+
+/** สรุปผล organic-competitors — upsert competitors (ป้อน content-gap เอกสาร 02). */
+export interface CompetitorsSummary {
+  projectId: number;
+  domain: string;
+  fetched: number;
+  competitorsUpserted: number;
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** payload ของ job 'serp-overview' (SERP top N ของ 1 keyword — เอกสาร 03a §5). */
+export interface SerpOverviewJobData {
+  projectId: number;
+  keyword: string;
+  country: string;
+  limit: number;
+  cap: number;
+}
+
+/** สรุปผล serp-overview — insert serp_results (snapshot ต่อ keyword). */
+export interface SerpOverviewSummary {
+  projectId: number;
+  keyword: string;
+  fetched: number;
+  serpInserted: number;
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** matching = "มีคำนี้อยู่", related = "ใกล้เคียง" (query fan-out) — เอกสาร 03a §5. */
+export type KeywordIdeasMode = 'matching' | 'related';
+
+/** payload ของ job 'keyword-ideas' (matching/related-terms — เอกสาร 03a §5). */
+export interface KeywordIdeasJobData {
+  projectId: number;
+  seed: string;
+  country: string;
+  limit: number;
+  cap: number;
+  mode: KeywordIdeasMode;
+}
+
+/** สรุปผล keyword ideas — insert content_gaps (seed ideas). */
+export interface KeywordIdeasSummary {
+  projectId: number;
+  seed: string;
+  mode: KeywordIdeasMode;
+  fetched: number;
+  gapsInserted: number;
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** payload ของ job 'backlinks' (site-explorer metrics/DR/refdomains — เอกสาร 03a §6). */
+export interface BacklinksJobData {
+  projectId: number;
+  domain: string;
+  country: string;
+  cap: number;
+}
+
+/** สรุปผล backlinks — insert backlink_snapshots (DR/UR/refdomains ระดับ domain). */
+export interface BacklinksSummary {
+  projectId: number;
+  domain: string;
+  domainRating: number | null;
+  urlRating: number | null;
+  referringDomains: number | null;
   unitsSpent: number;
   cached: boolean;
 }
@@ -118,6 +203,29 @@ const TOPPAGES_TTL_DEFAULT_SEC = 7 * 24 * 60 * 60;
 const TOP_TRAFFIC_FRACTION = 0.2;
 
 /**
+ * Endpoint Tier 2-4 ที่เหลือ (เอกสาร 03a §4.3/§5/§6) — select แคบตาม cost, ปลายทาง DB
+ * ตามเอกสาร 03a §9. TTL เป็น const (ไม่ผ่าน env — เลี่ยง sprawl; promote เป็น env ภายหลังได้).
+ */
+const COMPETITORS_ENDPOINT = 'site-explorer/organic-competitors';
+const COMPETITORS_FIELDS = ['competitor_domain', 'common_keywords'];
+const COMPETITORS_TTL_SEC = 7 * 24 * 60 * 60;
+
+const SERP_ENDPOINT = 'serp-overview';
+const SERP_FIELDS = ['position', 'url', 'domain'];
+const SERP_TTL_SEC = 7 * 24 * 60 * 60; // SERP overview ~7 วัน (เอกสาร 03 §3)
+
+const IDEAS_ENDPOINT_MATCHING = 'keywords-explorer/matching-terms';
+const IDEAS_ENDPOINT_RELATED = 'keywords-explorer/related-terms';
+const IDEAS_FIELDS = ['keyword', 'volume'];
+const IDEAS_TTL_SEC = 30 * 24 * 60 * 60;
+
+const BACKLINKS_ENDPOINT = 'site-explorer/metrics';
+const BACKLINKS_FIELDS = ['domain_rating', 'url_rating', 'referring_domains'];
+const BACKLINKS_TTL_SEC = 30 * 24 * 60 * 60; // backlinks summary ~30 วัน (เอกสาร 03 §3)
+/** field ที่บ่งว่า object เป็น "metric row" (response DR/refdomains เป็นค่าเดี่ยว ไม่ใช่ list). */
+const METRICS_KEYS = ['domain_rating', 'url_rating', 'referring_domains'];
+
+/**
  * EnrichmentService — flow [2] slice แรก: ดึง organic-keywords ของ domain แล้ว
  * เขียนลง keywords (+ best-effort page_keywords). orchestrate ผ่าน AhrefsClient
  * (ผ่านงบ/cache/rate-limit ครบ). รันใน worker เท่านั้น (เอกสาร 00 §4).
@@ -137,14 +245,19 @@ export class EnrichmentService {
   ): Promise<EnrichmentSummary> {
     const ttlSec =
       this.config.get<number>('AHREFS_ORGANIC_TTL_SEC') ?? 7 * 24 * 60 * 60;
+    // target = URL เฉพาะ (orchestration mode=exact) ถ้าส่งมา ไม่งั้น = ทั้ง domain.
+    const target = job.target ?? job.domain;
 
     const { data, unitsSpent, cached } = await this.ahrefs.fetch({
       projectId: job.projectId,
       endpoint: ORGANIC_ENDPOINT,
       params: {
-        target: job.domain,
+        target,
         country: job.country,
         limit: job.limit,
+        // ใส่ mode เฉพาะเมื่อระบุ (เช่น 'exact' ตอน enrich ราย URL) — ไม่ระบุ = default ของ
+        // Ahrefs (subdomains). conditional เพื่อไม่เปลี่ยน cache key ของงาน domain เดิม.
+        ...(job.mode ? { mode: job.mode } : {}),
         // date เป็น required ของ organic-keywords (เอกสาร 03a §3); pin กับ period ให้ cache
         // key นิ่งทั้งเดือน (ไม่ bust รายวัน) — ความถี่ refresh จริงคุมด้วย ttlSec.
         date: periodSnapshotDate(),
@@ -202,7 +315,7 @@ export class EnrichmentService {
 
     const summary: EnrichmentSummary = {
       projectId: job.projectId,
-      domain: job.domain,
+      domain: target, // = URL เมื่อ enrich ราย URL (mode=exact), ไม่งั้น = domain
       fetched: rows.length,
       keywordsUpserted,
       pageKeywordsInserted,
@@ -331,6 +444,237 @@ export class EnrichmentService {
       `top-pages#${job.projectId} ${job.domain} → top ${topCount}/${pages.length} units=${unitsSpent} cached=${cached}`,
     );
     return summary;
+  }
+
+  /**
+   * enrichCompetitors (เอกสาร 03a §4.3) — ดึงคู่แข่ง organic ของ domain แล้ว upsert ลง
+   * competitors (uq_comp = no-op ถ้าซ้ำ). ป้อน content-gap analysis (เอกสาร 02).
+   */
+  async enrichCompetitors(
+    job: CompetitorsJobData,
+  ): Promise<CompetitorsSummary> {
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: COMPETITORS_ENDPOINT,
+      params: {
+        target: job.domain,
+        country: job.country,
+        limit: job.limit,
+        date: periodSnapshotDate(),
+        order_by: 'common_keywords:desc', // คู่แข่งที่ทับ keyword มากสุดก่อน
+      },
+      fields: COMPETITORS_FIELDS,
+      expectedRows: job.limit,
+      ttlSec: COMPETITORS_TTL_SEC,
+      cap: job.cap,
+    });
+
+    const rows = extractRowArray(data);
+    let competitorsUpserted = 0;
+    for (const row of rows) {
+      const domain = this.str(row.competitor_domain) ?? this.str(row.domain);
+      if (!domain) continue;
+      await this.repo.upsertCompetitor(job.projectId, domain);
+      competitorsUpserted += 1;
+    }
+
+    const summary: CompetitorsSummary = {
+      projectId: job.projectId,
+      domain: job.domain,
+      fetched: rows.length,
+      competitorsUpserted,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `competitors#${job.projectId} ${job.domain} → ${competitorsUpserted}/${rows.length} units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /**
+   * fetchSerpOverview (เอกสาร 03a §5) — SERP top N ของ 1 keyword. upsert keyword ก่อนเพื่อ
+   * ได้ keywordId (FK ของ serp_results) แล้ว insert SERP rows เป็น snapshot (time-series).
+   */
+  async fetchSerpOverview(
+    job: SerpOverviewJobData,
+  ): Promise<SerpOverviewSummary> {
+    // ต้องมี keywordId ก่อน (serp_results.keyword_id required) — upsert แบบ metric ว่าง
+    const keywordId = await this.repo.upsertKeyword({
+      projectId: job.projectId,
+      keyword: job.keyword,
+      country: job.country,
+    });
+
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: SERP_ENDPOINT,
+      params: {
+        keyword: job.keyword,
+        country: job.country,
+        limit: job.limit,
+        date: periodSnapshotDate(),
+      },
+      fields: SERP_FIELDS,
+      expectedRows: job.limit,
+      ttlSec: SERP_TTL_SEC,
+      cap: job.cap,
+    });
+
+    const serp: InsertSerpResultInput[] = [];
+    for (const row of extractRowArray(data)) {
+      const position = this.int(row.position);
+      const url = this.str(row.url);
+      const domain = this.str(row.domain) ?? (url ? this.hostOf(url) : null);
+      if (position == null || !url || !domain) continue; // 3 คอลัมน์ required
+      serp.push({ keywordId, position, url, domain });
+    }
+    await this.repo.insertSerpResults(serp);
+
+    const summary: SerpOverviewSummary = {
+      projectId: job.projectId,
+      keyword: job.keyword,
+      fetched: extractRowArray(data).length,
+      serpInserted: serp.length,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `serp#${job.projectId} "${job.keyword}" → ${serp.length} rows units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /**
+   * fetchKeywordIdeas (เอกสาร 03a §5) — matching/related-terms ของ seed keyword → เก็บเป็น
+   * content_gaps (seed ideas / query fan-out). rows เยอะ → จำกัดด้วย limit + order_by volume.
+   */
+  async fetchKeywordIdeas(
+    job: KeywordIdeasJobData,
+  ): Promise<KeywordIdeasSummary> {
+    const endpoint =
+      job.mode === 'related' ? IDEAS_ENDPOINT_RELATED : IDEAS_ENDPOINT_MATCHING;
+
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint,
+      params: {
+        keywords: job.seed,
+        country: job.country,
+        limit: job.limit,
+        date: periodSnapshotDate(),
+        order_by: 'volume:desc',
+      },
+      fields: IDEAS_FIELDS,
+      expectedRows: job.limit,
+      ttlSec: IDEAS_TTL_SEC,
+      cap: job.cap,
+    });
+
+    const rows = extractRowArray(data);
+    let gapsInserted = 0;
+    for (const row of rows) {
+      const idea = this.str(row.keyword);
+      if (!idea) continue;
+      await this.repo.insertContentGap({
+        projectId: job.projectId,
+        missingSubtopic: idea,
+      });
+      gapsInserted += 1;
+    }
+
+    const summary: KeywordIdeasSummary = {
+      projectId: job.projectId,
+      seed: job.seed,
+      mode: job.mode,
+      fetched: rows.length,
+      gapsInserted,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `ideas#${job.projectId} ${job.mode} "${job.seed}" → ${gapsInserted}/${rows.length} units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /**
+   * fetchBacklinks (เอกสาร 03a §6) — DR/UR/refdomains ระดับ domain → backlink_snapshots
+   * (บริบท "หน้า rank ไหวไหม"). response เป็นค่าเดี่ยว (ไม่ใช่ list) → extractMetricsRow.
+   */
+  async fetchBacklinks(job: BacklinksJobData): Promise<BacklinksSummary> {
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: BACKLINKS_ENDPOINT,
+      params: {
+        target: job.domain,
+        country: job.country,
+        date: periodSnapshotDate(),
+      },
+      fields: BACKLINKS_FIELDS,
+      expectedRows: 1,
+      ttlSec: BACKLINKS_TTL_SEC,
+      cap: job.cap,
+    });
+
+    const row = this.extractMetricsRow(data);
+    const domainRating = this.int(row.domain_rating);
+    const urlRating = this.int(row.url_rating);
+    const referringDomains = this.int(row.referring_domains);
+    await this.repo.insertBacklinkSnapshot({
+      projectId: job.projectId,
+      pageId: null, // ระดับ domain
+      domainRating,
+      urlRating,
+      referringDomains,
+    });
+
+    const summary: BacklinksSummary = {
+      projectId: job.projectId,
+      domain: job.domain,
+      domainRating,
+      urlRating,
+      referringDomains,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `backlinks#${job.projectId} ${job.domain} → DR=${domainRating} UR=${urlRating} refdom=${referringDomains} units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /** hostname จาก URL (เติม serp_results.domain เมื่อ Ahrefs ไม่ส่ง domain มาตรง ๆ). */
+  private hostOf(url: string): string | null {
+    try {
+      return new URL(url).hostname || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ดึง object metric เดี่ยวจาก response (metrics/DR เป็นค่าเดี่ยว ไม่ใช่ list ของ rows):
+   * ลอง row แรกของ array ก่อน → ถ้าไม่มี ใช้ object ที่มี METRICS_KEYS (top-level หรือชั้นถัดไป
+   * เช่น { metrics: {...} }). คืน {} ถ้าหาไม่เจอ (ค่าออกเป็น null ทั้งหมด).
+   */
+  private extractMetricsRow(data: unknown): Record<string, unknown> {
+    const rows = extractRowArray(data);
+    if (rows.length > 0) return rows[0];
+    if (data && typeof data === 'object') {
+      const obj = data as Record<string, unknown>;
+      if (METRICS_KEYS.some((k) => k in obj)) return obj;
+      for (const v of Object.values(obj)) {
+        if (
+          v &&
+          typeof v === 'object' &&
+          METRICS_KEYS.some((k) => k in (v as Record<string, unknown>))
+        ) {
+          return v as Record<string, unknown>;
+        }
+      }
+    }
+    return {};
   }
 
   /** dedup + trim + sort keyword (cache key นิ่งไม่ขึ้นกับลำดับ/ตัวซ้ำ; ทิ้งตัวว่าง). */

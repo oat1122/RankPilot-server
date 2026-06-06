@@ -54,10 +54,53 @@ export const topPagesSummarySchema = z.object({
   cached: z.boolean(),
 });
 
+/** สรุปผล organic-competitors (job 'competitors' — เอกสาร 03a §4.3). */
+export const competitorsSummarySchema = z.object({
+  projectId: z.number(),
+  domain: z.string(),
+  fetched: z.number(),
+  competitorsUpserted: z.number(),
+  unitsSpent: z.number(),
+  cached: z.boolean(),
+});
+
+/** สรุปผล serp-overview (job 'serp-overview' — เอกสาร 03a §5). */
+export const serpOverviewSummarySchema = z.object({
+  projectId: z.number(),
+  keyword: z.string(),
+  fetched: z.number(),
+  serpInserted: z.number(),
+  unitsSpent: z.number(),
+  cached: z.boolean(),
+});
+
+/** สรุปผล keyword ideas (job 'keyword-ideas' — เอกสาร 03a §5). */
+export const keywordIdeasSummarySchema = z.object({
+  projectId: z.number(),
+  seed: z.string(),
+  mode: z.enum(['matching', 'related']),
+  fetched: z.number(),
+  gapsInserted: z.number(),
+  unitsSpent: z.number(),
+  cached: z.boolean(),
+});
+
+/** สรุปผล backlinks (job 'backlinks' — เอกสาร 03a §6). */
+export const backlinksSummarySchema = z.object({
+  projectId: z.number(),
+  domain: z.string(),
+  domainRating: z.number().nullable(),
+  urlRating: z.number().nullable(),
+  referringDomains: z.number().nullable(),
+  unitsSpent: z.number(),
+  cached: z.boolean(),
+});
+
 /** GET enrich/:jobId — สถานะ job + สรุปผลเมื่อ state=completed (result แยกชนิดด้วย name). */
 export const enrichStatusSchema = z.object({
   jobId: z.string(),
-  name: z.string(), // 'enrich-organic' | 'enrich-keywords' | 'top-pages'
+  // job.name: enrich-organic | enrich-keywords | top-pages | competitors | serp-overview | keyword-ideas | backlinks
+  name: z.string(),
   // BullMQ JobState: waiting | active | completed | failed | delayed | ...
   state: z.string(),
   result: z
@@ -65,6 +108,10 @@ export const enrichStatusSchema = z.object({
       enrichSummarySchema,
       keywordOverviewSummarySchema,
       topPagesSummarySchema,
+      competitorsSummarySchema,
+      serpOverviewSummarySchema,
+      keywordIdeasSummarySchema,
+      backlinksSummarySchema,
     ])
     .nullable(),
   failedReason: z.string().nullable(),

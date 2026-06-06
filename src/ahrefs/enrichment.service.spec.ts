@@ -4,6 +4,10 @@ import type {
   EnrichOrganicJobData,
   EnrichKeywordsJobData,
   TopPagesJobData,
+  CompetitorsJobData,
+  SerpOverviewJobData,
+  KeywordIdeasJobData,
+  BacklinksJobData,
 } from './enrichment.service';
 import type { AhrefsClient } from './client/ahrefs.client';
 import type { AhrefsRepo } from './ahrefs.repo';
@@ -14,6 +18,10 @@ function makeService() {
     upsertKeyword: jest.fn().mockResolvedValue(101),
     findPageByUrlHash: jest.fn().mockResolvedValue(null),
     insertPageKeyword: jest.fn().mockResolvedValue(undefined),
+    upsertCompetitor: jest.fn().mockResolvedValue(undefined),
+    insertSerpResults: jest.fn().mockResolvedValue(undefined),
+    insertContentGap: jest.fn().mockResolvedValue(undefined),
+    insertBacklinkSnapshot: jest.fn().mockResolvedValue(undefined),
   };
   const config = { get: () => 604800 } as unknown as ConfigService;
   const service = new EnrichmentService(
@@ -291,5 +299,249 @@ describe('EnrichmentService.selectTopPages (Tier 2 — เอกสาร 03a §
       { url: 'https://example.com/b', traffic: 500, topKeyword: 'b' },
     ]);
     expect(summary.unitsSpent).toBe(80);
+  });
+});
+
+describe('EnrichmentService.enrichOrganicKeywords target/mode (orchestration)', () => {
+  it('ส่ง target=URL + mode=exact และ summary.domain = URL', async () => {
+    const { service, ahrefs } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: { keywords: [] },
+      unitsSpent: 50,
+      rows: 0,
+      cached: false,
+    });
+    const summary = await service.enrichOrganicKeywords({
+      ...JOB,
+      target: 'https://example.com/blog/post',
+      mode: 'exact',
+    });
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
+      { params: Record<string, unknown> },
+    ];
+    expect(fetchArg.params).toMatchObject({
+      target: 'https://example.com/blog/post',
+      mode: 'exact',
+    });
+    expect(summary.domain).toBe('https://example.com/blog/post');
+  });
+
+  it('ไม่ใส่ mode ลง params เมื่อไม่ระบุ (cache key งาน domain เดิมไม่เปลี่ยน)', async () => {
+    const { service, ahrefs } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: { keywords: [] },
+      unitsSpent: 50,
+      rows: 0,
+      cached: false,
+    });
+    await service.enrichOrganicKeywords(JOB);
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
+      { params: Record<string, unknown> },
+    ];
+    expect(fetchArg.params).not.toHaveProperty('mode');
+    expect(fetchArg.params.target).toBe('example.com');
+  });
+});
+
+const COMP_JOB: CompetitorsJobData = {
+  projectId: 1,
+  domain: 'example.com',
+  country: 'th',
+  limit: 10,
+  cap: 100_000,
+};
+
+describe('EnrichmentService.enrichCompetitors (Tier 2 — เอกสาร 03a §4.3)', () => {
+  it('upsert คู่แข่งทุกแถวที่มี domain, ข้ามแถวว่าง', async () => {
+    const { service, ahrefs, repo } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: {
+        competitors: [
+          { competitor_domain: 'rival-a.com', common_keywords: '120' },
+          { competitor_domain: '  ' }, // ว่าง → ข้าม
+          { common_keywords: '5' }, // ไม่มี domain → ข้าม
+          { competitor_domain: 'rival-b.com' },
+        ],
+      },
+      unitsSpent: 60,
+      rows: 4,
+      cached: false,
+    });
+
+    const summary = await service.enrichCompetitors(COMP_JOB);
+
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
+      { endpoint: string; params: Record<string, unknown> },
+    ];
+    expect(fetchArg.endpoint).toBe('site-explorer/organic-competitors');
+    expect(fetchArg.params).toMatchObject({
+      target: 'example.com',
+      order_by: 'common_keywords:desc',
+    });
+    expect(repo.upsertCompetitor).toHaveBeenCalledTimes(2);
+    expect(repo.upsertCompetitor).toHaveBeenCalledWith(1, 'rival-a.com');
+    expect(repo.upsertCompetitor).toHaveBeenCalledWith(1, 'rival-b.com');
+    expect(summary).toMatchObject({
+      fetched: 4,
+      competitorsUpserted: 2,
+      unitsSpent: 60,
+      cached: false,
+    });
+  });
+});
+
+const SERP_JOB: SerpOverviewJobData = {
+  projectId: 1,
+  keyword: 'seo tools',
+  country: 'th',
+  limit: 10,
+  cap: 100_000,
+};
+
+describe('EnrichmentService.fetchSerpOverview (Tier 3 — เอกสาร 03a §5)', () => {
+  it('upsert keyword → insert serp (เติม domain จาก url ถ้าไม่มี), ข้ามแถวไม่ครบ', async () => {
+    const { service, ahrefs, repo } = makeService();
+    repo.upsertKeyword.mockResolvedValue(202);
+    ahrefs.fetch.mockResolvedValue({
+      data: {
+        serp: [
+          { position: '1', url: 'https://a.com/x', domain: 'a.com' },
+          { position: '2', url: 'https://b.com/y' }, // ไม่มี domain → เติมจาก url
+          { position: '3' }, // ไม่มี url → ข้าม
+        ],
+      },
+      unitsSpent: 150,
+      rows: 3,
+      cached: false,
+    });
+
+    const summary = await service.fetchSerpOverview(SERP_JOB);
+
+    expect(repo.upsertKeyword).toHaveBeenCalledWith(
+      expect.objectContaining({ keyword: 'seo tools', country: 'th' }),
+    );
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
+      { endpoint: string; params: Record<string, unknown> },
+    ];
+    expect(fetchArg.endpoint).toBe('serp-overview');
+    expect(fetchArg.params).toMatchObject({ keyword: 'seo tools' });
+    expect(repo.insertSerpResults).toHaveBeenCalledWith([
+      { keywordId: 202, position: 1, url: 'https://a.com/x', domain: 'a.com' },
+      { keywordId: 202, position: 2, url: 'https://b.com/y', domain: 'b.com' },
+    ]);
+    expect(summary).toMatchObject({
+      keyword: 'seo tools',
+      fetched: 3,
+      serpInserted: 2,
+      unitsSpent: 150,
+    });
+  });
+});
+
+const IDEAS_JOB: KeywordIdeasJobData = {
+  projectId: 1,
+  seed: 'seo',
+  country: 'th',
+  limit: 50,
+  cap: 100_000,
+  mode: 'related',
+};
+
+describe('EnrichmentService.fetchKeywordIdeas (Tier 3 — เอกสาร 03a §5)', () => {
+  it('related → related-terms endpoint, insert content_gaps ต่อ idea, ข้ามว่าง', async () => {
+    const { service, ahrefs, repo } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: {
+        keywords: [
+          { keyword: 'seo tools', volume: '500' },
+          { keyword: '   ' }, // ข้าม
+          { keyword: 'seo audit', volume: '300' },
+        ],
+      },
+      unitsSpent: 90,
+      rows: 3,
+      cached: false,
+    });
+
+    const summary = await service.fetchKeywordIdeas(IDEAS_JOB);
+
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
+      { endpoint: string; params: Record<string, unknown> },
+    ];
+    expect(fetchArg.endpoint).toBe('keywords-explorer/related-terms');
+    expect(fetchArg.params).toMatchObject({
+      keywords: 'seo',
+      order_by: 'volume:desc',
+    });
+    expect(repo.insertContentGap).toHaveBeenCalledTimes(2);
+    expect(repo.insertContentGap).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 1, missingSubtopic: 'seo tools' }),
+    );
+    expect(summary).toMatchObject({
+      seed: 'seo',
+      mode: 'related',
+      fetched: 3,
+      gapsInserted: 2,
+      unitsSpent: 90,
+    });
+  });
+
+  it('matching (default) → matching-terms endpoint', async () => {
+    const { service, ahrefs } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: { keywords: [] },
+      unitsSpent: 50,
+      rows: 0,
+      cached: false,
+    });
+    await service.fetchKeywordIdeas({ ...IDEAS_JOB, mode: 'matching' });
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [{ endpoint: string }];
+    expect(fetchArg.endpoint).toBe('keywords-explorer/matching-terms');
+  });
+});
+
+const BL_JOB: BacklinksJobData = {
+  projectId: 1,
+  domain: 'example.com',
+  country: 'th',
+  cap: 100_000,
+};
+
+describe('EnrichmentService.fetchBacklinks (Tier 4 — เอกสาร 03a §6)', () => {
+  it('แกะ metric เดี่ยวจาก nested object → insert backlink_snapshot', async () => {
+    const { service, ahrefs, repo } = makeService();
+    ahrefs.fetch.mockResolvedValue({
+      data: {
+        metrics: {
+          domain_rating: '72',
+          url_rating: '40',
+          referring_domains: '1500',
+        },
+      },
+      unitsSpent: 55,
+      rows: 1,
+      cached: false,
+    });
+
+    const summary = await service.fetchBacklinks(BL_JOB);
+
+    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [{ endpoint: string }];
+    expect(fetchArg.endpoint).toBe('site-explorer/metrics');
+    expect(repo.insertBacklinkSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        pageId: null,
+        domainRating: 72,
+        urlRating: 40,
+        referringDomains: 1500,
+      }),
+    );
+    expect(summary).toMatchObject({
+      domain: 'example.com',
+      domainRating: 72,
+      urlRating: 40,
+      referringDomains: 1500,
+      unitsSpent: 55,
+    });
   });
 });

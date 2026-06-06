@@ -5,10 +5,14 @@ import type { Db } from '../db/db.module';
 import {
   ahrefsCache,
   ahrefsUsage,
+  backlinkSnapshots,
+  competitors,
+  contentGaps,
   keywords,
   pageKeywords,
   pages,
   projects,
+  serpResults,
 } from '../db/schema';
 
 /** input ของ upsertKeyword — ค่า metric เป็น nullable ∵ Ahrefs อาจไม่ส่งครบทุก field. */
@@ -30,6 +34,31 @@ export interface InsertPageKeywordInput {
   position?: number | null;
   traffic?: number | null;
   trafficValue?: number | null;
+}
+
+/** 1 แถว SERP (serp-overview → serp_results — เอกสาร 03a §5). */
+export interface InsertSerpResultInput {
+  keywordId: number;
+  position: number;
+  url: string;
+  domain: string;
+}
+
+/** seed idea จาก matching/related-terms → content_gaps (เอกสาร 03a §5). */
+export interface InsertContentGapInput {
+  projectId: number;
+  missingSubtopic: string;
+  keywordId?: number | null;
+  competitorDomains?: unknown;
+}
+
+/** snapshot DR/UR/refdomains (site-explorer metrics → backlink_snapshots — เอกสาร 03a §6). */
+export interface InsertBacklinkSnapshotInput {
+  projectId: number;
+  pageId?: number | null;
+  referringDomains?: number | null;
+  urlRating?: number | null;
+  domainRating?: number | null;
 }
 
 export interface UpsertCacheInput {
@@ -187,6 +216,50 @@ export class AhrefsRepo {
       traffic: input.traffic ?? null,
       trafficValue:
         input.trafficValue != null ? String(input.trafficValue) : null,
+    });
+  }
+
+  /** upsert คู่แข่ง 1 โดเมน (uq_comp = project+domain → ซ้ำ = no-op). เอกสาร 03a §4.3. */
+  async upsertCompetitor(projectId: number, domain: string): Promise<void> {
+    await this.db
+      .insert(competitors)
+      .values({ projectId, domain })
+      .onDuplicateKeyUpdate({ set: { domain } });
+  }
+
+  /** insert SERP snapshot หลายแถวในครั้งเดียว (time-series — serp_results ไม่มี uq). */
+  async insertSerpResults(rows: InsertSerpResultInput[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.db.insert(serpResults).values(
+      rows.map((r) => ({
+        keywordId: r.keywordId,
+        position: r.position,
+        url: r.url,
+        domain: r.domain,
+      })),
+    );
+  }
+
+  /** insert seed keyword idea (content_gaps ไม่มี uq → append; dedup ทำชั้นบนถ้าต้องการ). */
+  async insertContentGap(input: InsertContentGapInput): Promise<void> {
+    await this.db.insert(contentGaps).values({
+      projectId: input.projectId,
+      missingSubtopic: input.missingSubtopic,
+      keywordId: input.keywordId ?? null,
+      competitorDomains: input.competitorDomains ?? null,
+    });
+  }
+
+  /** insert snapshot DR/UR/refdomains (time-series — backlink_snapshots เก็บตาม capturedAt). */
+  async insertBacklinkSnapshot(
+    input: InsertBacklinkSnapshotInput,
+  ): Promise<void> {
+    await this.db.insert(backlinkSnapshots).values({
+      projectId: input.projectId,
+      pageId: input.pageId ?? null,
+      referringDomains: input.referringDomains ?? null,
+      urlRating: input.urlRating ?? null,
+      domainRating: input.domainRating ?? null,
     });
   }
 }

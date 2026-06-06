@@ -12,6 +12,10 @@ import {
   CreateEnrichDto,
   EnrichKeywordsDto,
   TopPagesDto,
+  CompetitorsDto,
+  SerpOverviewDto,
+  KeywordIdeasDto,
+  BacklinksDto,
 } from './dto/create-enrich.dto';
 import {
   AhrefsBudgetDto,
@@ -69,6 +73,58 @@ export class EnrichController {
     @Body() dto: TopPagesDto,
   ) {
     return this.enrich.enqueueTopPages(projectId, dto);
+  }
+
+  @Post('competitors')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว organic-competitors — คู่แข่ง organic ของ domain (เอกสาร 03a §4.3)',
+  })
+  competitors(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: CompetitorsDto,
+  ) {
+    return this.enrich.enqueueCompetitors(projectId, dto);
+  }
+
+  @Post('serp')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว serp-overview ของ 1 keyword (แพง — เฉพาะ keyword สำคัญ, เอกสาร 03a §5)',
+  })
+  serp(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: SerpOverviewDto,
+  ) {
+    return this.enrich.enqueueSerp(projectId, dto);
+  }
+
+  @Post('keyword-ideas')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว matching/related-terms — keyword ideas/query fan-out (เอกสาร 03a §5)',
+  })
+  keywordIdeas(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: KeywordIdeasDto,
+  ) {
+    return this.enrich.enqueueIdeas(projectId, dto);
+  }
+
+  @Post('backlinks')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว site-explorer metrics/DR/backlinks ระดับ domain (เอกสาร 03a §6)',
+  })
+  backlinks(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: BacklinksDto,
+  ) {
+    return this.enrich.enqueueBacklinks(projectId, dto);
   }
 
   @Get('enrich/:jobId')

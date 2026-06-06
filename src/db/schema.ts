@@ -430,4 +430,36 @@ export const alerts = mysqlTable('alerts', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
-/* ahrefs_cache / ahrefs_usage → เอกสาร 03 (placeholder — ยังไม่ implement รอบนี้) */
+/* ---------- ahrefs_cache (durable cache ต่อ request — เอกสาร 03 §2) ---------- */
+// เก็บ response ดิบของแต่ละ Ahrefs request (key = endpoint+paramsHash) + units จริงที่ใช้
+// → ชั้น CacheLayer อ่านก่อนยิงซ้ำ (กัน units บาน) และเป็น archive ให้ตรวจย้อนหลัง.
+export const ahrefsCache = mysqlTable(
+  'ahrefs_cache',
+  {
+    id: pk(),
+    endpoint: varchar('endpoint', { length: 128 }).notNull(),
+    paramsHash: char('params_hash', { length: 40 }).notNull(), // sha1(endpoint+params)
+    response: json('response').notNull(),
+    unitsSpent: int('units_spent').notNull(),
+    rows: int('rows').notNull().default(0),
+    fetchedAt: timestamp('fetched_at').notNull().defaultNow(),
+    expiresAt: timestamp('expires_at').notNull(),
+  },
+  (t) => ({ uq: uniqueIndex('uq_cache').on(t.endpoint, t.paramsHash) }),
+);
+
+/* ---------- ahrefs_usage (งบ units ต่อโปรเจคต่อเดือน — เอกสาร 03 §2/§5) ---------- */
+// ground truth แบบ durable ของยอดใช้จริง (Redis เป็น hot counter สำหรับ reserve/settle)
+// — bump ทุกครั้งหลังยิงจริง, ใช้ reconcile กับ limits-and-usage ภายหลัง.
+export const ahrefsUsage = mysqlTable(
+  'ahrefs_usage',
+  {
+    id: pk(),
+    projectId: fk('project_id').notNull(),
+    period: char('period', { length: 7 }).notNull(), // 'YYYY-MM'
+    unitsSpent: int('units_spent').notNull().default(0),
+    requests: int('requests').notNull().default(0),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({ uq: uniqueIndex('uq_usage').on(t.projectId, t.period) }),
+);

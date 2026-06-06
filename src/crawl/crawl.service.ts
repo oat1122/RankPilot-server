@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import type { CreateCrawlDto } from './dto/create-crawl.dto';
 import type { CrawlResult } from '../crawler/crawler.schema';
 import { AppException, ErrorCode } from '../common/http';
+import { withTimeout } from '../common/with-timeout';
 
 /** payload + ผลของ queue 'crawl' — typed เพื่อให้ job.data/returnvalue ไม่เป็น any */
 type CrawlJobData = { url: string };
@@ -86,16 +87,4 @@ export class CrawlService implements OnModuleInit {
       failedReason: state === 'failed' ? job.failedReason : null,
     };
   }
-}
-
-/** race promise กับ timeout — reject ถ้าเกิน ms (เคลียร์ timer เสมอ กัน handle ค้าง). */
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`enqueue timed out after ${ms}ms`)),
-      ms,
-    );
-  });
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }

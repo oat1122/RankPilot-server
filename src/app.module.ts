@@ -8,6 +8,7 @@ import { bullRootAsyncOptions } from './queue/bull.config';
 import { CommonModule } from './common/common.module';
 import { HealthModule } from './health/health.module';
 import { CrawlModule } from './crawl/crawl.module';
+import { EnrichModule } from './enrich/enrich.module';
 
 @Module({
   imports: [
@@ -22,6 +23,8 @@ import { CrawlModule } from './crawl/crawl.module';
     CommonModule,
     HealthModule,
     CrawlModule,
+    // Ahrefs Enrichment [2] (producer) — POST/GET /projects/:id/ahrefs/* (เอกสาร 03)
+    EnrichModule,
   ],
   providers: [
     // validate ทุก request ที่ใช้ createZodDto ทั่วแอป (เอกสาร 04 §6)

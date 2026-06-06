@@ -23,6 +23,12 @@ export const ErrorCode = {
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   // เฉพาะโดเมน — เพิ่มได้เรื่อย ๆ ตาม feature
   CRAWL_JOB_NOT_FOUND: 'CRAWL_JOB_NOT_FOUND',
+  // Ahrefs Enrichment (เอกสาร 03) — งบ units/rate-limit/upstream ของ Ahrefs API v3
+  AHREFS_JOB_NOT_FOUND: 'AHREFS_JOB_NOT_FOUND',
+  AHREFS_BUDGET_EXCEEDED: 'AHREFS_BUDGET_EXCEEDED', // เกินเพดาน units/เดือน (กันก่อนยิง)
+  AHREFS_RATE_LIMITED: 'AHREFS_RATE_LIMITED', // Ahrefs ตอบ 429
+  AHREFS_UNAUTHORIZED: 'AHREFS_UNAUTHORIZED', // key หาย/ผิด (401/403)
+  AHREFS_API_ERROR: 'AHREFS_API_ERROR', // upstream ล้ม (5xx/อื่น ๆ)
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -41,6 +47,11 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
   SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   CRAWL_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  AHREFS_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  AHREFS_BUDGET_EXCEEDED: HttpStatus.TOO_MANY_REQUESTS,
+  AHREFS_RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
+  AHREFS_UNAUTHORIZED: HttpStatus.UNAUTHORIZED,
+  AHREFS_API_ERROR: HttpStatus.BAD_GATEWAY,
 };
 
 /** ข้อความ default ต่อ code (override ได้ตอน throw). */
@@ -57,6 +68,11 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   INTERNAL_ERROR: 'Internal server error',
   SERVICE_UNAVAILABLE: 'Service temporarily unavailable',
   CRAWL_JOB_NOT_FOUND: 'Crawl job not found',
+  AHREFS_JOB_NOT_FOUND: 'Ahrefs enrichment job not found',
+  AHREFS_BUDGET_EXCEEDED: 'Ahrefs monthly unit budget exceeded',
+  AHREFS_RATE_LIMITED: 'Ahrefs API rate limited',
+  AHREFS_UNAUTHORIZED: 'Ahrefs API key missing or invalid',
+  AHREFS_API_ERROR: 'Ahrefs API request failed',
 };
 
 /** lookup: HTTP status → ErrorCode (เฉพาะที่ map ตรง ๆ ได้). */

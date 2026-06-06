@@ -23,7 +23,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
-    "db:vector:check": "tsx --env-file=.env src/db/vector-smoke.ts"
+    "db:vector:check": "tsx --env-file=.env src/db/vector-smoke.ts",
+    "ahrefs:limits": "tsx --env-file=.env src/ahrefs/limits-check.ts"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",

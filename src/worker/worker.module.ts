@@ -5,10 +5,13 @@ import { validateEnv } from '../config/env';
 import { bullRootAsyncOptions } from '../queue/bull.config';
 import { CrawlerModule } from '../crawler/crawler.module';
 import { CrawlProcessor } from './crawl.processor';
+import { AhrefsModule } from '../ahrefs/ahrefs.module';
+import { AhrefsProcessor } from './ahrefs.processor';
 
 /**
  * Root module ของ worker process (apps/worker ในอนาคต — เอกสาร 04 §0).
  * แยกจาก AppModule (api) โดยสิ้นเชิง: ที่นี่เท่านั้นที่ register WorkerHost (consumer).
+ * consumer: 'crawl' (CrawlProcessor) + 'ahrefs' (AhrefsProcessor, เอกสาร 03 §5).
  */
 @Module({
   imports: [
@@ -19,8 +22,10 @@ import { CrawlProcessor } from './crawl.processor';
     }),
     BullModule.forRootAsync(bullRootAsyncOptions),
     BullModule.registerQueue({ name: 'crawl' }),
+    BullModule.registerQueue({ name: 'ahrefs' }),
     CrawlerModule,
+    AhrefsModule,
   ],
-  providers: [CrawlProcessor],
+  providers: [CrawlProcessor, AhrefsProcessor],
 })
 export class WorkerModule {}

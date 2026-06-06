@@ -52,9 +52,21 @@ export const envSchema = z.object({
   // เพดาน units/เดือนระดับ workspace (plan-agnostic, เอกสาร 03) — default = โควต้าจริงของแผน
   // Lite ที่ยืนยันผ่าน limits-and-usage (units_limit_workspace=100000, per-key=ไม่จำกัด,
   // 2026-06-07). ระดับโปรเจคจัดสรรย่อยจาก projects.monthly_unit_budget (คนละตัว).
-  AHREFS_MONTHLY_UNIT_BUDGET: z.coerce.number().int().positive().default(100000),
+  AHREFS_MONTHLY_UNIT_BUDGET: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(100000),
   // country default ของ Site/Keywords Explorer (ISO-3166 alpha-2) — เอกสาร 01 projects.country.
   AHREFS_DEFAULT_COUNTRY: z.string().length(2).default('th'),
+  // TTL (วินาที) ของ cache organic-keywords (เอกสาร 03 §3 — Site Explorer organic ~7-14 วัน).
+  // หมายเหตุ: RateLimiter ของ queue 'ahrefs' (เอกสาร 03 §5) hardcode ใน @Processor
+  //   (decorator อ่าน ConfigService ไม่ได้ — ตรงกับ limiter:{max:5,duration:1000} ในเอกสาร).
+  AHREFS_ORGANIC_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60),
 });
 
 export type Env = z.infer<typeof envSchema>;

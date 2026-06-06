@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import type { AxiosResponse } from 'axios';
+import { normalizeUrl } from '../common/url';
 import type { CrawlHeadings, CrawlLink, CrawlResult } from './crawler.schema';
 
 /** ฟิลด์ที่ได้จากการ parse HTML ล้วน ๆ (ไม่รวม metadata ระดับ HTTP) */
@@ -52,7 +53,7 @@ export class CrawlerService {
 
   /** ดึง 1 URL → คืนข้อมูล on-page (map กับ page_snapshots เอกสาร 01). */
   async crawl(rawUrl: string): Promise<CrawlResult> {
-    const url = this.normalizeUrl(rawUrl);
+    const url = normalizeUrl(rawUrl);
 
     const res = await firstValueFrom(
       this.http.get<string>(url, {
@@ -204,24 +205,6 @@ export class CrawlerService {
         t.forEach((x) => typeof x === 'string' && out.add(x));
       if ('@graph' in obj) this.collectTypes(obj['@graph'], out);
     }
-  }
-
-  /** http://, https:// เท่านั้น; เติม https:// ให้ถ้าส่ง bare domain มาจาก worker. */
-  private normalizeUrl(raw: string): string {
-    const trimmed = raw.trim();
-    // มี scheme://อยู่แล้ว (เช่น ftp://, ws://, file://) → ห้ามเติม https:// ทับ
-    // ∵ จะได้ URL เพี้ยน (ftp://x → https://ftp//x) แทนที่จะ reject อย่างถูกต้อง;
-    // ตรวจเฉพาะรูป scheme:// เพื่อไม่ชน bare domain ที่มี port (example.com:8080).
-    const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
-      ? trimmed
-      : `https://${trimmed}`;
-    const parsed = this.safeUrl(withProto);
-    if (
-      !parsed ||
-      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-    )
-      throw new Error(`UNSUPPORTED_URL: ${raw}`);
-    return parsed.toString();
   }
 
   private resolveFinalUrl(res: AxiosResponse, fallback: string): string {

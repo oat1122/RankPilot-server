@@ -10,8 +10,16 @@ export const envSchema = z.object({
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
-  // DATABASE_URL ยัง optional ∵ ยังไม่เชื่อม DB (Phase 1 — เอกสาร 01)
-  DATABASE_URL: z.string().optional(),
+  // DATABASE_URL required แล้ว ∵ wire data layer (Drizzle + MariaDB 11.8 — เอกสาร 01 §5).
+  // ต้องเป็น mysql:// (MariaDB ผ่าน driver mysql2) — สไตล์เดียวกับ REDIS_URL refine เพื่อ
+  // fail-fast พร้อมข้อความชัดเจนที่ boot แทนที่จะ throw แบบ cryptic ตอน mysql2 createPool.
+  DATABASE_URL: z
+    .string()
+    .min(1, 'DATABASE_URL is required (Drizzle/MariaDB)')
+    .refine((u) => /^mysql:\/\//i.test(u), {
+      message:
+        'DATABASE_URL ต้องขึ้นต้นด้วย mysql:// (MariaDB ผ่าน driver mysql2)',
+    }),
   // REDIS_URL required แล้ว ∵ wire BullMQ queue 'crawl' (เอกสาร 03 §1 / 04 §5).
   // ต้องเป็น redis:// หรือ rediss:// — ไม่งั้น parseRedisUrl (new URL) จะ throw ตอน
   // BullMQ init แบบ cryptic แทนที่จะ fail-fast พร้อมข้อความชัดเจนที่ boot.

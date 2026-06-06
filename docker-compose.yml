@@ -1,0 +1,32 @@
+# Local dev infra (เอกสาร 04 §4) — ตรงกับ Railway prod ให้มากที่สุด.
+# mariadb 11.8 = VECTOR ✓ (ต้อง ≥11.7) · redis 7 = BullMQ · minio = R2-compatible (dev เก็บ HTML/screenshot)
+#
+# ยืนยัน VECTOR หลังขึ้น container:
+#   docker compose exec mariadb mariadb -uroot -pdev rankpilot \
+#     -e "SELECT VERSION(); SELECT VEC_DISTANCE_COSINE(VEC_FromText('[1,0]'), VEC_FromText('[0,1]'));"
+services:
+  mariadb:
+    image: mariadb:11.8 # ตรงกับ Railway prod — VECTOR ✓ (ต้อง ≥11.7)
+    environment:
+      MARIADB_ROOT_PASSWORD: dev
+      MARIADB_DATABASE: rankpilot
+    ports: ['3306:3306']
+    command: ['--innodb-buffer-pool-size=512M']
+    volumes:
+      - mariadb_data:/var/lib/mysql
+  redis:
+    image: redis:7
+    ports: ['6379:6379']
+  minio: # R2-compatible (dev เก็บ HTML/screenshot)
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: dev
+      MINIO_ROOT_PASSWORD: devdevdev
+    ports: ['9000:9000', '9001:9001']
+    volumes:
+      - minio_data:/data
+
+volumes:
+  mariadb_data:
+  minio_data:

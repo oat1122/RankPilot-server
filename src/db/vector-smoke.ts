@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import { packVectorLE } from './types/vector';
 
 /**
  * VECTOR smoke test (เอกสาร 04 §4 / 01 §5) — รัน: `npm run db:vector:check`
@@ -7,15 +8,13 @@ import mysql from 'mysql2/promise';
  * ตรวจ 3 อย่างบน MariaDB ที่ DATABASE_URL ชี้ไป:
  *   1) VERSION() ≥ 11.7 (VECTOR ต้อง ≥11.7)
  *   2) VEC_DISTANCE_COSINE(VEC_FromText('[1,0]'), VEC_FromText('[0,1]')) ≈ 1
- *   3) round-trip คอลัมน์ VECTOR: insert packed float32 LE (แบบเดียวกับ custom type) → select กลับ;
- *      ถ้า insert binary พลาด → fallback VEC_FromText('[...]') (ตามหมายเหตุเอกสาร 01 §1/§5).
+ *   3) round-trip คอลัมน์ VECTOR ผ่าน "path เดียวกับ Drizzle custom type" คือ insert
+ *      packed float32 LE (packVectorLE — ฟังก์ชันเดียวกับ toDriver) ผ่าน conn.query
+ *      (text protocol) แล้ว select กลับ. ⚠️ ต้องเป็น conn.query ไม่ใช่ conn.execute:
+ *      MariaDB VECTOR ปฏิเสธ Buffer ที่ส่งผ่าน prepared/binary protocol ("Incorrect
+ *      vector value") และ Drizzle mysql2 ก็ใช้ client.query เป็น path ปกติ. ถ้า binary
+ *      พลาดจริง → fallback VEC_FromText พร้อม log เหตุ (ไม่กลืน error เงียบ ๆ).
  */
-function packFloat32LE(values: number[]): Buffer {
-  const buf = Buffer.allocUnsafe(values.length * 4);
-  for (let i = 0; i < values.length; i++) buf.writeFloatLE(values[i], i * 4);
-  return buf;
-}
-
 function versionAtLeast(
   version: string,
   major: number,
@@ -61,11 +60,16 @@ async function main() {
     const original = [0.25, -0.75];
     let path: 'binary' | 'vec_fromtext';
     try {
-      await conn.execute('INSERT INTO _vec_smoke (id, v) VALUES (1, ?)', [
-        packFloat32LE(original),
+      // conn.query (text protocol) = path เดียวกับที่ Drizzle mysql2 ใช้ insert จริง
+      await conn.query('INSERT INTO _vec_smoke (id, v) VALUES (1, ?)', [
+        packVectorLE(original),
       ]);
       path = 'binary';
-    } catch {
+    } catch (err) {
+      // ไม่กลืน error: log เหตุที่ binary พลาด เพื่อให้เห็น regression ของ path จริง
+      console.warn(
+        `   ⚠️ binary insert (packed float32 LE) ล้มเหลว → fallback VEC_FromText: ${(err as Error).message}`,
+      );
       await conn.query(
         `INSERT INTO _vec_smoke (id, v) VALUES (1, VEC_FromText('[${original.join(',')}]'))`,
       );

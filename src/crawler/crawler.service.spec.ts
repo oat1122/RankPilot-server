@@ -3,6 +3,7 @@ import type { HttpService } from '@nestjs/axios';
 import type { ConfigService } from '@nestjs/config';
 import type { AxiosResponse } from 'axios';
 import { CrawlerService } from './crawler.service';
+import { crawlResultSchema } from './crawler.schema';
 
 // HTML fixture ครอบคลุมทุกฟิลด์ที่ bot ต้องแกะ (เอกสาร 01 page_snapshots)
 const FIXTURE_HTML = `<!doctype html>
@@ -125,6 +126,11 @@ describe('CrawlerService', () => {
       expect(result.contentType).toContain('text/html');
       expect(() => new Date(result.fetchedAt).toISOString()).not.toThrow();
     });
+
+    // contract: ผลต้อง parse ผ่าน crawlResultSchema เสมอ — Phase 1 เอาไปเขียน DB ตรง ๆ (เอกสาร 01)
+    it('ผลลัพธ์ผ่าน crawlResultSchema', () => {
+      expect(() => crawlResultSchema.parse(result)).not.toThrow();
+    });
   });
 
   describe('crawl() — non-HTML', () => {
@@ -137,6 +143,8 @@ describe('CrawlerService', () => {
       expect(result.title).toBeNull();
       expect(result.links).toEqual([]);
       expect(result.wordCount).toBe(0);
+      // snapshot ขั้นต่ำก็ยังต้องเป็น CrawlResult ที่ valid
+      expect(() => crawlResultSchema.parse(result)).not.toThrow();
     });
   });
 
@@ -148,6 +156,44 @@ describe('CrawlerService', () => {
       const result = await service.crawl('https://example.com/missing');
       expect(result.httpStatus).toBe(404);
       expect(result.wordCount).toBeGreaterThan(0);
+    });
+  });
+
+  describe('crawl() — content-type case-insensitive', () => {
+    // media type ใน Content-Type ไม่สนตัวพิมพ์ (RFC 7231) → TEXT/HTML ต้อง parse เหมือน text/html
+    it('parse หน้า HTML ที่ส่ง Content-Type ตัวพิมพ์ใหญ่ (TEXT/HTML)', async () => {
+      const service = makeService(
+        makeResponse(
+          '<html><head><title>UP</title></head><body><p>w1 w2</p></body></html>',
+          'TEXT/HTML; charset=UTF-8',
+        ),
+      );
+      const result = await service.crawl('https://example.com/up');
+      expect(result.title).toBe('UP');
+      expect(result.wordCount).toBeGreaterThan(0);
+    });
+  });
+
+  describe('crawl() — normalizeUrl scheme handling', () => {
+    // เติม https:// เฉพาะ bare domain; scheme อื่น (ftp/file/ws) ต้อง reject ไม่ใช่ mangle
+    it.each([
+      'ftp://files.example.com',
+      'file:///etc/passwd',
+      'ws://s.example.com',
+    ])('reject scheme ที่ crawl ไม่ได้: %s', async (bad) => {
+      const service = makeService(makeResponse('<html><body>x</body></html>'));
+      await expect(service.crawl(bad)).rejects.toThrow(/UNSUPPORTED_URL/);
+    });
+
+    it.each([
+      ['example.com', 'https://example.com/'],
+      ['example.com:8080', 'https://example.com:8080/'], // bare domain + port ต้องไม่ถูกมองเป็น scheme
+      ['localhost:3000', 'https://localhost:3000/'],
+      ['http://x.com', 'http://x.com/'], // http คงเดิม ไม่ถูกบังคับเป็น https
+    ])('normalize %s → %s', async (input, expected) => {
+      const service = makeService(makeResponse('<html><body>x</body></html>'));
+      const result = await service.crawl(input);
+      expect(result.url).toBe(expected);
     });
   });
 });

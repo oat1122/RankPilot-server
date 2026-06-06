@@ -71,7 +71,11 @@ export class CrawlerService {
     const meta = { url, finalUrl, httpStatus, contentType, fetchedAt };
 
     // ไม่ใช่ HTML → คืน snapshot ขั้นต่ำ (ไม่ parse) เพื่อยังเก็บประวัติ status ได้
-    if (!contentType.includes('html') || typeof res.data !== 'string') {
+    // เทียบแบบ case-insensitive ∵ media type ใน Content-Type ไม่สนตัวพิมพ์ (RFC 7231 §3.1.1.1)
+    if (
+      !contentType.toLowerCase().includes('html') ||
+      typeof res.data !== 'string'
+    ) {
       this.logger.debug(`non-html (${contentType}) ${finalUrl}`);
       return { ...meta, ...this.blankParse() };
     }
@@ -193,7 +197,10 @@ export class CrawlerService {
   /** http://, https:// เท่านั้น; เติม https:// ให้ถ้าส่ง bare domain มาจาก worker. */
   private normalizeUrl(raw: string): string {
     const trimmed = raw.trim();
-    const withProto = /^https?:\/\//i.test(trimmed)
+    // มี scheme://อยู่แล้ว (เช่น ftp://, ws://, file://) → ห้ามเติม https:// ทับ
+    // ∵ จะได้ URL เพี้ยน (ftp://x → https://ftp//x) แทนที่จะ reject อย่างถูกต้อง;
+    // ตรวจเฉพาะรูป scheme:// เพื่อไม่ชน bare domain ที่มี port (example.com:8080).
+    const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
       ? trimmed
       : `https://${trimmed}`;
     const parsed = this.safeUrl(withProto);

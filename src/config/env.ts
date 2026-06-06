@@ -12,8 +12,15 @@ export const envSchema = z.object({
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
   // DATABASE_URL ยัง optional ∵ ยังไม่เชื่อม DB (Phase 1 — เอกสาร 01)
   DATABASE_URL: z.string().optional(),
-  // REDIS_URL required แล้ว ∵ wire BullMQ queue 'crawl' (เอกสาร 03 §1 / 04 §5)
-  REDIS_URL: z.string().min(1, 'REDIS_URL is required (BullMQ)'),
+  // REDIS_URL required แล้ว ∵ wire BullMQ queue 'crawl' (เอกสาร 03 §1 / 04 §5).
+  // ต้องเป็น redis:// หรือ rediss:// — ไม่งั้น parseRedisUrl (new URL) จะ throw ตอน
+  // BullMQ init แบบ cryptic แทนที่จะ fail-fast พร้อมข้อความชัดเจนที่ boot.
+  REDIS_URL: z
+    .string()
+    .min(1, 'REDIS_URL is required (BullMQ)')
+    .refine((u) => /^rediss?:\/\//i.test(u), {
+      message: 'REDIS_URL ต้องขึ้นต้นด้วย redis:// หรือ rediss://',
+    }),
 
   // Crawler bot tunables (worker — เอกสาร 00 §0 [1] / 01 page_snapshots)
   CRAWLER_USER_AGENT: z

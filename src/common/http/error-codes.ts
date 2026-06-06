@@ -19,6 +19,8 @@ export const ErrorCode = {
   RATE_LIMITED: 'RATE_LIMITED',
   HTTP_ERROR: 'HTTP_ERROR',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // โครงสร้างพื้นฐานล่ม (Redis/queue/DB) → 503 ให้ FE retry ได้ ไม่ใช่ bug ของ request
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   // เฉพาะโดเมน — เพิ่มได้เรื่อย ๆ ตาม feature
   CRAWL_JOB_NOT_FOUND: 'CRAWL_JOB_NOT_FOUND',
 } as const;
@@ -37,6 +39,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
   HTTP_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
+  SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   CRAWL_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
 };
 
@@ -52,6 +55,7 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   RATE_LIMITED: 'Too many requests',
   HTTP_ERROR: 'Request failed',
   INTERNAL_ERROR: 'Internal server error',
+  SERVICE_UNAVAILABLE: 'Service temporarily unavailable',
   CRAWL_JOB_NOT_FOUND: 'Crawl job not found',
 };
 
@@ -64,6 +68,7 @@ const STATUS_CODE_MAP: Record<number, ErrorCode> = {
   [HttpStatus.CONFLICT]: ErrorCode.CONFLICT,
   [HttpStatus.UNPROCESSABLE_ENTITY]: ErrorCode.UNPROCESSABLE_ENTITY,
   [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.RATE_LIMITED,
+  [HttpStatus.SERVICE_UNAVAILABLE]: ErrorCode.SERVICE_UNAVAILABLE,
 };
 
 /**

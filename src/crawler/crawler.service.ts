@@ -14,6 +14,7 @@ type ParsedPage = Pick<
   | 'metaDescription'
   | 'h1'
   | 'headings'
+  | 'paragraphs'
   | 'canonical'
   | 'robotsMeta'
   | 'schemaTypes'
@@ -102,6 +103,10 @@ export class CrawlerService {
       h3: this.collectText($, 'h3'),
     };
 
+    // ย่อหน้า <p> — เก็บก่อนตัด script/style (เหมือน headings) เป็น text ต่อย่อหน้า
+    // ข้ามย่อหน้าว่าง (collectText filter แล้ว). ใช้วิเคราะห์โครงสร้าง/intro (เอกสาร 01).
+    const paragraphs = this.collectText($, 'p');
+
     const links: CrawlLink[] = [];
     $('a[href]').each((_, el) => {
       const abs = this.safeUrl($(el).attr('href') ?? '', base ?? undefined);
@@ -136,6 +141,7 @@ export class CrawlerService {
       ),
       h1: headings.h1[0] ?? null,
       headings,
+      paragraphs,
       canonical: this.attrOrNull($('link[rel="canonical"]').attr('href')),
       robotsMeta: this.attrOrNull($('meta[name="robots"]').attr('content')),
       schemaTypes,
@@ -156,6 +162,7 @@ export class CrawlerService {
       metaDescription: null,
       h1: null,
       headings: { h1: [], h2: [], h3: [] },
+      paragraphs: [],
       canonical: null,
       robotsMeta: null,
       schemaTypes: [],

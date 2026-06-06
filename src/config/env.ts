@@ -29,6 +29,10 @@ export const envSchema = z.object({
     .refine((u) => /^rediss?:\/\//i.test(u), {
       message: 'REDIS_URL ต้องขึ้นต้นด้วย redis:// หรือ rediss://',
     }),
+  // เพดานเวลารอ queue.add() ฝั่ง api (producer) — กัน POST /crawls ค้างยาวเมื่อ Redis
+  // ล่ม/ช้า (ioredis offline-queue + maxRetriesPerRequest:null ไม่ timeout เอง) แล้ว
+  // ตอบ 503 เร็ว ๆ แทนปล่อยค้างจน client abort (เอกสาร 03 §1 / 00 §4).
+  QUEUE_ENQUEUE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
   // Crawler bot tunables (worker — เอกสาร 00 §0 [1] / 01 page_snapshots)
   CRAWLER_USER_AGENT: z
@@ -37,6 +41,20 @@ export const envSchema = z.object({
   CRAWLER_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   CRAWLER_MAX_BYTES: z.coerce.number().int().positive().default(5_000_000),
   CRAWLER_MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(5),
+
+  // Ahrefs API v3 (เอกสาร 03 + 03a) — ดึง keyword ของ URL ผ่าน Site/Keywords Explorer,
+  // ยิงจาก worker queue 'ahrefs' (api ≠ worker). ยัง "ไม่ wire" (setup phase) → key เป็น
+  // optional: ไม่ใส่ก็ boot ได้ (AhrefsService จะ throw ตอนเรียกจริงในเฟสถัดไป) เหมือนที่
+  // DATABASE_URL/REDIS_URL เคย optional ก่อน wire.
+  AHREFS_API_KEY: z.string().min(1).optional(),
+  // base v3 — Authorization: Bearer <key>; endpoint relative เช่น 'site-explorer/organic-keywords'.
+  AHREFS_API_BASE_URL: z.string().url().default('https://api.ahrefs.com/v3'),
+  // เพดาน units/เดือนระดับ workspace (plan-agnostic, เอกสาร 03) — default = โควต้าจริงของแผน
+  // Lite ที่ยืนยันผ่าน limits-and-usage (units_limit_workspace=100000, per-key=ไม่จำกัด,
+  // 2026-06-07). ระดับโปรเจคจัดสรรย่อยจาก projects.monthly_unit_budget (คนละตัว).
+  AHREFS_MONTHLY_UNIT_BUDGET: z.coerce.number().int().positive().default(100000),
+  // country default ของ Site/Keywords Explorer (ISO-3166 alpha-2) — เอกสาร 01 projects.country.
+  AHREFS_DEFAULT_COUNTRY: z.string().length(2).default('th'),
 });
 
 export type Env = z.infer<typeof envSchema>;

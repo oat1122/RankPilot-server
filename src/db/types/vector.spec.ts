@@ -37,7 +37,9 @@ describe('vector custom type — packVectorLE / unpackVectorLE', () => {
   });
 
   it('unpack: นับจำนวนค่าจากความยาว buffer (มิติคงเดิม)', () => {
-    expect(unpackVectorLE(packVectorLE(new Array<number>(1024).fill(0.5)))).toHaveLength(1024);
+    expect(
+      unpackVectorLE(packVectorLE(new Array<number>(1024).fill(0.5))),
+    ).toHaveLength(1024);
     expect(unpackVectorLE(Buffer.alloc(0))).toEqual([]);
   });
 

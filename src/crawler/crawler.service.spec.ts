@@ -24,6 +24,8 @@ const FIXTURE_HTML = `<!doctype html>
   <h2>หัวข้อย่อย B</h2>
   <h3>ย่อยลึก</h3>
   <p>เนื้อหา หนึ่ง สอง สาม</p>
+  <p>ย่อหน้าที่สอง</p>
+  <p>   </p>
   <a href="/about">เกี่ยวกับเรา</a>
   <a href="https://other-site.com/x" rel="nofollow">ลิงก์นอก</a>
   <a href="mailto:hi@example.com">เมล</a>
@@ -92,6 +94,13 @@ describe('CrawlerService', () => {
       expect(result.headings.h3).toEqual(['ย่อยลึก']);
     });
 
+    it('แกะ paragraphs จาก <p> (เรียงตามเอกสาร, ข้ามย่อหน้าว่าง)', () => {
+      expect(result.paragraphs).toEqual([
+        'เนื้อหา หนึ่ง สอง สาม',
+        'ย่อหน้าที่สอง',
+      ]);
+    });
+
     it('แกะ schemaTypes จาก JSON-LD', () => {
       expect(result.schemaTypes).toEqual(['Article']);
     });
@@ -142,6 +151,7 @@ describe('CrawlerService', () => {
       expect(result.httpStatus).toBe(200);
       expect(result.title).toBeNull();
       expect(result.links).toEqual([]);
+      expect(result.paragraphs).toEqual([]);
       expect(result.wordCount).toBe(0);
       // snapshot ขั้นต่ำก็ยังต้องเป็น CrawlResult ที่ valid
       expect(() => crawlResultSchema.parse(result)).not.toThrow();

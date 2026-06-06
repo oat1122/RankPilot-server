@@ -28,6 +28,7 @@ export const crawlResultSchema = z.object({
   metaDescription: z.string().nullable(),
   h1: z.string().nullable(),
   headings: crawlHeadingsSchema,
+  paragraphs: z.array(z.string()), // ข้อความใน <p> แต่ละย่อหน้า — สำคัญต่อการวิเคราะห์เนื้อหา/โครงสร้าง (เอกสาร 01)
   canonical: z.string().nullable(),
   robotsMeta: z.string().nullable(),
   schemaTypes: z.array(z.string()), // @type จาก JSON-LD

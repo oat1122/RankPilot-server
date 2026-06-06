@@ -6,20 +6,40 @@ import { Queue } from 'bullmq';
 import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 import { AhrefsRepo } from '../ahrefs/ahrefs.repo';
+import type { ProjectRow } from '../ahrefs/ahrefs.repo';
 import { BudgetGuard } from '../ahrefs/budget.guard';
 import { currentPeriod } from '../ahrefs/period';
 import type {
   EnrichOrganicJobData,
+  EnrichKeywordsJobData,
+  TopPagesJobData,
   EnrichmentSummary,
+  KeywordOverviewSummary,
+  TopPagesSummary,
 } from '../ahrefs/enrichment.service';
-import type { CreateEnrichDto } from './dto/create-enrich.dto';
+import type {
+  CreateEnrichDto,
+  EnrichKeywordsDto,
+  TopPagesDto,
+} from './dto/create-enrich.dto';
 
-type EnrichQueue = Queue<EnrichOrganicJobData, EnrichmentSummary>;
+/** ทุก job ของ queue 'ahrefs' (แยกด้วย job.name) — producer/consumer ใช้ชุดเดียวกัน. */
+type AhrefsJobData =
+  | EnrichOrganicJobData
+  | EnrichKeywordsJobData
+  | TopPagesJobData;
+type AhrefsJobResult =
+  | EnrichmentSummary
+  | KeywordOverviewSummary
+  | TopPagesSummary;
+type EnrichQueue = Queue<AhrefsJobData, AhrefsJobResult>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม */
 const QUEUE_ERROR_LOG_THROTTLE_MS = 10_000;
 /** default rows/request — Lite จริง ~10 rows (เอกสาร 03 §0) */
 const DEFAULT_LIMIT = 10;
+/** default หน้าที่ดึงจาก top-pages ก่อนคัด top 20% (เอกสาร 03a §4.2). */
+const DEFAULT_TOPPAGES_LIMIT = 100;
 
 /**
  * EnrichService (api side) — บางตามกฎ api ≠ worker (เอกสาร 00 §4): โหลด project,
@@ -52,48 +72,42 @@ export class EnrichService implements OnModuleInit {
     });
   }
 
+  /** enqueue organic-keywords ของ domain (job 'enrich-organic' — เอกสาร 03a §3). */
   async enqueue(projectId: number, dto: CreateEnrichDto) {
-    const project = await this.repo.getProject(projectId);
-    if (!project) {
-      throw new AppException(
-        ErrorCode.NOT_FOUND,
-        `project ${projectId} not found`,
-      );
-    }
-    const country =
-      dto.country ??
-      project.country ??
-      this.config.get<string>('AHREFS_DEFAULT_COUNTRY')!;
-    const cap =
-      project.monthlyUnitBudget ??
-      this.config.get<number>('AHREFS_MONTHLY_UNIT_BUDGET')!;
+    const project = await this.loadProject(projectId);
     const data: EnrichOrganicJobData = {
       projectId,
       domain: project.domain,
-      country,
+      country: this.countryOf(project, dto.country),
       limit: dto.limit ?? DEFAULT_LIMIT,
-      cap,
+      cap: this.capOf(project),
     };
+    return this.addJob('enrich-organic', data, projectId);
+  }
 
-    // ครอบ timeout ∵ ตอน Redis ล่ม queue.add() ค้าง (offline-queue) ไม่ reject เอง →
-    // ตอบ 503 เร็ว ๆ แทนปล่อย request ค้างจน client abort.
-    const timeoutMs =
-      this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
-    try {
-      const job = await withTimeout(
-        this.queue.add('enrich-organic', data),
-        timeoutMs,
-      );
-      return { jobId: job.id, projectId, status: 'queued' as const };
-    } catch (err) {
-      const reason =
-        err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      this.logger.error(`enqueue ahrefs failed: ${reason}`);
-      throw new AppException(
-        ErrorCode.SERVICE_UNAVAILABLE,
-        'ตั้งคิว Ahrefs enrichment ไม่สำเร็จ (queue ไม่พร้อม) — โปรดลองใหม่อีกครั้ง',
-      );
-    }
+  /** enqueue keywords-explorer/overview (job 'enrich-keywords' — เอกสาร 03a §4.1). */
+  async enqueueKeywords(projectId: number, dto: EnrichKeywordsDto) {
+    const project = await this.loadProject(projectId);
+    const data: EnrichKeywordsJobData = {
+      projectId,
+      country: this.countryOf(project, dto.country),
+      keywords: dto.keywords,
+      cap: this.capOf(project),
+    };
+    return this.addJob('enrich-keywords', data, projectId);
+  }
+
+  /** enqueue site-explorer/top-pages (job 'top-pages' — เอกสาร 03a §4.2). */
+  async enqueueTopPages(projectId: number, dto: TopPagesDto) {
+    const project = await this.loadProject(projectId);
+    const data: TopPagesJobData = {
+      projectId,
+      domain: project.domain,
+      country: this.countryOf(project, dto.country),
+      limit: dto.limit ?? DEFAULT_TOPPAGES_LIMIT,
+      cap: this.capOf(project),
+    };
+    return this.addJob('top-pages', data, projectId);
   }
 
   async status(jobId: string) {
@@ -106,6 +120,7 @@ export class EnrichService implements OnModuleInit {
     const state = await job.getState();
     return {
       jobId: job.id,
+      name: job.name, // 'enrich-organic' | 'enrich-keywords' | 'top-pages'
       state, // waiting | active | completed | failed | delayed
       result: state === 'completed' ? job.returnvalue : null,
       failedReason: state === 'failed' ? job.failedReason : null,
@@ -113,17 +128,9 @@ export class EnrichService implements OnModuleInit {
   }
 
   async budgetStatus(projectId: number) {
-    const project = await this.repo.getProject(projectId);
-    if (!project) {
-      throw new AppException(
-        ErrorCode.NOT_FOUND,
-        `project ${projectId} not found`,
-      );
-    }
+    const project = await this.loadProject(projectId);
     const period = currentPeriod();
-    const cap =
-      project.monthlyUnitBudget ??
-      this.config.get<number>('AHREFS_MONTHLY_UNIT_BUDGET')!;
+    const cap = this.capOf(project);
     const unitsSpent = await this.budget.spent(projectId, period);
     return {
       projectId,
@@ -132,5 +139,59 @@ export class EnrichService implements OnModuleInit {
       cap,
       remaining: Math.max(cap - unitsSpent, 0),
     };
+  }
+
+  /** โหลด project (domain/country/budget) — โยน NOT_FOUND ถ้าไม่มี. */
+  private async loadProject(projectId: number): Promise<ProjectRow> {
+    const project = await this.repo.getProject(projectId);
+    if (!project) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        `project ${projectId} not found`,
+      );
+    }
+    return project;
+  }
+
+  /** เพดาน units/เดือนของโปรเจค (fallback = ค่า env ระดับ workspace). */
+  private capOf(project: ProjectRow): number {
+    return (
+      project.monthlyUnitBudget ??
+      this.config.get<number>('AHREFS_MONTHLY_UNIT_BUDGET')!
+    );
+  }
+
+  /** country ที่ใช้ยิง Ahrefs: override (body) → project → env default. */
+  private countryOf(project: ProjectRow, override?: string): string {
+    return (
+      override ??
+      project.country ??
+      this.config.get<string>('AHREFS_DEFAULT_COUNTRY')!
+    );
+  }
+
+  /**
+   * add งานเข้า queue 'ahrefs' พร้อม timeout — ตอน Redis ล่ม queue.add() ค้าง (offline-queue)
+   * ไม่ reject เอง → ตอบ 503 เร็ว ๆ แทนปล่อย request ค้างจน client abort (เอกสาร 00 §4).
+   */
+  private async addJob(
+    name: 'enrich-organic' | 'enrich-keywords' | 'top-pages',
+    data: AhrefsJobData,
+    projectId: number,
+  ) {
+    const timeoutMs =
+      this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
+    try {
+      const job = await withTimeout(this.queue.add(name, data), timeoutMs);
+      return { jobId: job.id, projectId, status: 'queued' as const };
+    } catch (err) {
+      const reason =
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      this.logger.error(`enqueue ahrefs '${name}' failed: ${reason}`);
+      throw new AppException(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'ตั้งคิว Ahrefs ไม่สำเร็จ (queue ไม่พร้อม) — โปรดลองใหม่อีกครั้ง',
+      );
+    }
   }
 }

@@ -48,7 +48,9 @@ export const projects = mysqlTable(
     name: varchar('name', { length: 200 }).notNull(),
     domain: varchar('domain', { length: 255 }).notNull(), // target ของ Ahrefs
     country: char('country', { length: 2 }).notNull().default('th'),
-    monthlyUnitBudget: int('monthly_unit_budget').notNull().default(25000), // เอกสาร 03
+    // เพดาน units/เดือน ระดับโปรเจค (sub-allocation จาก workspace) — default = โควต้า Lite จริง
+    // ที่ยืนยันผ่าน limits-and-usage (workspace=100000, 2026-06-07; เอกสาร 03/03a §10).
+    monthlyUnitBudget: int('monthly_unit_budget').notNull().default(100000),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({ byOwner: index('ix_projects_owner').on(t.ownerId) }),

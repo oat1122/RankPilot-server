@@ -67,6 +67,18 @@ export const envSchema = z.object({
     .int()
     .positive()
     .default(7 * 24 * 60 * 60),
+  // TTL cache keywords-explorer/overview (เอกสาร 03 §3 — metric เปลี่ยนช้า ~30 วัน).
+  AHREFS_KEYWORDS_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
+  // TTL cache site-explorer/top-pages (เอกสาร 03 §3 — Site Explorer organic ~7-14 วัน).
+  AHREFS_TOPPAGES_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,0 +1,1 @@
+ALTER TABLE `projects` MODIFY COLUMN `monthly_unit_budget` int NOT NULL DEFAULT 100000;

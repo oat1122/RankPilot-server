@@ -8,7 +8,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
-import { CreateEnrichDto } from './dto/create-enrich.dto';
+import {
+  CreateEnrichDto,
+  EnrichKeywordsDto,
+  TopPagesDto,
+} from './dto/create-enrich.dto';
 import {
   AhrefsBudgetDto,
   EnrichEnqueuedDto,
@@ -39,6 +43,32 @@ export class EnrichController {
     @Body() dto: CreateEnrichDto,
   ) {
     return this.enrich.enqueue(projectId, dto);
+  }
+
+  @Post('keywords')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว keywords-explorer/overview — batch enrich keyword ที่ยังไม่ติด (เอกสาร 03a §4.1)',
+  })
+  enrichKeywords(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: EnrichKeywordsDto,
+  ) {
+    return this.enrich.enqueueKeywords(projectId, dto);
+  }
+
+  @Post('top-pages')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิว site-explorer/top-pages — คัด top 20% by traffic ก่อน enrich (เอกสาร 03a §4.2)',
+  })
+  topPages(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: TopPagesDto,
+  ) {
+    return this.enrich.enqueueTopPages(projectId, dto);
   }
 
   @Get('enrich/:jobId')

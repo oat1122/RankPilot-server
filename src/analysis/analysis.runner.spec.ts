@@ -65,13 +65,44 @@ describe('AnalysisRunner', () => {
   it('resolve crawl ล่าสุดเมื่อไม่ระบุ crawlId', async () => {
     const repo = mockRepo({
       latestCrawlId: jest.fn().mockResolvedValue(77),
-      snapshotsForCrawl: jest.fn().mockResolvedValue([]),
+      snapshotsForCrawl: jest.fn().mockResolvedValue([snap()]),
     });
     const runner = makeRunner(repo);
     const out = await runner.analyzeCrawl({ projectId: 5 });
     expect(repo.latestCrawlId).toHaveBeenCalledWith(5);
     expect(repo.snapshotsForCrawl).toHaveBeenCalledWith(77);
     expect(out.crawlId).toBe(77);
+  });
+
+  it('โยน ANALYSIS_NO_CRAWL เมื่อ crawl ที่ resolve ได้ไม่มี snapshot (ยังไม่เสร็จ/ล้ม)', async () => {
+    const repo = mockRepo({
+      snapshotsForCrawl: jest.fn().mockResolvedValue([]),
+    });
+    const runner = makeRunner(repo);
+    await runner
+      .analyzeCrawl({ projectId: 5, crawlId: 42 })
+      .then(() => {
+        throw new Error('ควรโยน ANALYSIS_NO_CRAWL');
+      })
+      .catch((e: AppException) => {
+        expect(e).toBeInstanceOf(AppException);
+        expect(e.code).toBe(ErrorCode.ANALYSIS_NO_CRAWL);
+      });
+    // ต้องไม่เขียนอะไรลง DB เมื่อไม่มี snapshot
+    expect(repo.upsertScore).not.toHaveBeenCalled();
+    expect(repo.insertFindings).not.toHaveBeenCalled();
+  });
+
+  it('ไม่สร้าง orphan เมื่อ crawl มีหน้าเดียว (single-URL → multiPage=false)', async () => {
+    const only = snap({ snapshotId: 10, pageId: 1 });
+    const repo = mockRepo({
+      snapshotsForCrawl: jest.fn().mockResolvedValue([only]),
+      inboundInternalCountByPage: jest.fn().mockResolvedValue(new Map()), // 0 inbound
+    });
+    const runner = makeRunner(repo);
+    const out = await runner.analyzeCrawl({ projectId: 5, crawlId: 99 });
+    expect(out.pagesAnalyzed).toBe(1);
+    expect(out.byType.orphan ?? 0).toBe(0); // หน้าเดียว → ไม่ flag orphan ปลอม
   });
 
   it('คำนวณ score ทุกหน้า + สร้าง orphan finding ให้หน้าที่ไม่มี inbound link', async () => {

@@ -18,3 +18,6 @@ npm-debug.log*
 # tests / coverage
 /coverage
 /.nyc_output
+
+# HTML snapshot storage (HTML_STORAGE_DIR default) — raw .html.gz ของ crawl, ไม่ commit
+/storage

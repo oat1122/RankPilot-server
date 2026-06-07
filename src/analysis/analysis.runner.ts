@@ -71,6 +71,14 @@ export class AnalysisRunner {
       );
 
     const snapshots = await this.repo.snapshotsForCrawl(crawlId);
+    // crawl done/partial ต้องมี snapshot ≥1 เสมอ ∴ ว่าง = crawl ยังไม่เสร็จ/ล้ม หรือ caller
+    // ส่ง crawlId ผิด → โยนแทนคืน pagesAnalyzed=0 เงียบ ๆ (กันผลลวงว่า "วิเคราะห์สำเร็จ 0 หน้า").
+    if (snapshots.length === 0)
+      throw new AppException(
+        ErrorCode.ANALYSIS_NO_CRAWL,
+        `crawl ${crawlId} ไม่มี snapshot ให้วิเคราะห์ (crawl ยังไม่เสร็จ/ล้ม หรือ crawlId ไม่ถูกต้อง)`,
+      );
+
     const signals = await this.repo.pageSignalsForCrawl(
       snapshots.map((s) => s.pageId),
     );
@@ -78,6 +86,9 @@ export class AnalysisRunner {
 
     const findings: FindingInsert[] = [];
     let scoresUpserted = 0;
+    // orphan ต้องมี link graph ข้ามหน้า → ส่งให้ detectFindings รู้ว่า crawl นี้กี่หน้า
+    // (single-URL → false = ไม่ตรวจ orphan, กัน false-positive; ดู scoring.DetectContext).
+    const multiPage = snapshots.length > 1;
 
     for (const snap of snapshots) {
       const view = this.toView(snap, signals, inbound);
@@ -92,7 +103,7 @@ export class AnalysisRunner {
       });
       scoresUpserted += 1;
 
-      for (const f of detectFindings(view))
+      for (const f of detectFindings(view, { multiPage }))
         findings.push({
           projectId: job.projectId,
           pageId: snap.pageId,

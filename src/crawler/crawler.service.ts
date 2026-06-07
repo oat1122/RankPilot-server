@@ -6,7 +6,13 @@ import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import type { AxiosResponse } from 'axios';
 import { normalizeUrl } from '../common/url';
-import type { CrawlHeadings, CrawlLink, CrawlResult } from './crawler.schema';
+import type {
+  CrawledPage,
+  CrawlHeadings,
+  CrawlImage,
+  CrawlLink,
+  CrawlResult,
+} from './crawler.schema';
 
 /** ฟิลด์ที่ได้จากการ parse HTML ล้วน ๆ (ไม่รวม metadata ระดับ HTTP) */
 type ParsedPage = Pick<
@@ -23,6 +29,7 @@ type ParsedPage = Pick<
   | 'internalLinks'
   | 'externalLinks'
   | 'images'
+  | 'imageRows'
   | 'wordCount'
   | 'contentHash'
   | 'bodyText'
@@ -51,8 +58,11 @@ export class CrawlerService {
     private readonly config: ConfigService,
   ) {}
 
-  /** ดึง 1 URL → คืนข้อมูล on-page (map กับ page_snapshots เอกสาร 01). */
-  async crawl(rawUrl: string): Promise<CrawlResult> {
+  /**
+   * ดึง 1 URL → CrawledPage = on-page (map page_snapshots เอกสาร 01) + rawHtml ดิบ.
+   * rawHtml แยกออกจาก CrawlResult เพื่อส่งขึ้น R2 โดยไม่ bloat job.returnvalue/response.
+   */
+  async crawl(rawUrl: string): Promise<CrawledPage> {
     const url = normalizeUrl(rawUrl);
 
     const res = await firstValueFrom(
@@ -84,10 +94,14 @@ export class CrawlerService {
       typeof res.data !== 'string'
     ) {
       this.logger.debug(`non-html (${contentType}) ${finalUrl}`);
-      return { ...meta, ...this.blankParse() };
+      // non-HTML → ไม่มี rawHtml ให้เก็บขึ้น R2
+      return { result: { ...meta, ...this.blankParse() }, rawHtml: null };
     }
 
-    return { ...meta, ...this.parseHtml(res.data, finalUrl) };
+    return {
+      result: { ...meta, ...this.parseHtml(res.data, finalUrl) },
+      rawHtml: res.data,
+    };
   }
 
   /** แกะ HTML → on-page fields. แยกเป็น pure method เพื่อทดสอบได้โดยไม่แตะ network. */
@@ -122,13 +136,19 @@ export class CrawlerService {
     });
     const internalLinks = links.filter((l) => l.isInternal).length;
 
-    let imagesTotal = 0;
-    let imagesMissingAlt = 0;
+    // เก็บรายรูป (→ page_images) + นับรวมจากชุดเดียวกันให้ตรงกันเสมอ. นับเฉพาะรูปที่มี src
+    // ใช้ได้ (resolve ได้ + ยาวไม่เกิน column 2048) ∵ page_images.src NOT NULL varchar(2048);
+    // alt ว่าง/ไม่มี = hasAlt:false (ตรรกะ missingAlt เดิม).
+    const imageRows: CrawlImage[] = [];
     $('img').each((_, el) => {
-      imagesTotal += 1;
-      const alt = $(el).attr('alt');
-      if (alt === undefined || this.collapse(alt) === '') imagesMissingAlt += 1;
+      const abs = this.safeUrl($(el).attr('src') ?? '', base ?? undefined);
+      const src = abs ? abs.toString() : '';
+      if (!src || src.length > 2048) return;
+      const alt = this.attrOrNull($(el).attr('alt'));
+      imageRows.push({ src, alt, hasAlt: alt != null });
     });
+    const imagesTotal = imageRows.length;
+    const imagesMissingAlt = imageRows.filter((i) => !i.hasAlt).length;
 
     // body text หลังตัด script/style/noscript/template เพื่อไม่ให้ปนคำใน wordCount/hash
     $('script, style, noscript, template').remove();
@@ -150,6 +170,7 @@ export class CrawlerService {
       internalLinks,
       externalLinks: links.length - internalLinks,
       images: { total: imagesTotal, missingAlt: imagesMissingAlt },
+      imageRows,
       wordCount,
       contentHash: createHash('sha1').update(bodyText).digest('hex'),
       bodyText,
@@ -171,6 +192,7 @@ export class CrawlerService {
       internalLinks: 0,
       externalLinks: 0,
       images: { total: 0, missingAlt: 0 },
+      imageRows: [],
       wordCount: 0,
       contentHash: createHash('sha1').update('').digest('hex'),
       bodyText: '',

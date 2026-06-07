@@ -97,6 +97,16 @@ export interface Finding {
   details: Record<string, unknown>;
 }
 
+/** บริบทระดับ crawl ที่ detectFindings ต้องรู้ (finding บางชนิดต้องดู link graph ทั้งรอบ). */
+export interface DetectContext {
+  /**
+   * crawl รอบนี้ครอบ "หลายหน้า" ไหม — จำเป็นต่อ orphan: inboundInternalCountByPage นับ
+   * เฉพาะลิงก์ภายใน crawlId เดียวกัน ∴ crawl หน้าเดียว (MVP single-URL) หน้านั้นจะไม่มีวันมี
+   * inbound = orphan ปลอมทุกครั้ง. default false = ปลอดภัยกับ single-URL.
+   */
+  multiPage: boolean;
+}
+
 /**
  * normalize ข้อความสำหรับเทียบ substring แบบหลวม: lowercase + ยุบ
  * space/`-`/`_`/`/` เป็นช่องว่างเดียว. ให้ keyword "best running shoes"
@@ -225,7 +235,10 @@ export function impactScore(severity: Severity, pageTraffic: number): number {
  * detectFindings — สร้าง audit_findings ชนิด "โค้ดล้วน" จาก 1 หน้า (เอกสาร 04 §7).
  * type ตรงกับ enum ใน auditFindings.type. impactScore ถ่วงด้วย pageTraffic.
  */
-export function detectFindings(view: SnapshotView): Finding[] {
+export function detectFindings(
+  view: SnapshotView,
+  ctx: DetectContext = { multiPage: false },
+): Finding[] {
   const out: Finding[] = [];
   const add = (
     type: string,
@@ -293,7 +306,10 @@ export function detectFindings(view: SnapshotView): Finding[] {
 
   // orphan — หน้า rankable (indexable + http ok) แต่ไม่มีลิงก์ภายในชี้เข้า.
   // มี traffic = สำคัญกว่า (high) ไม่มี = medium. เอกสาร 04 §7 "orphan detector".
+  // ⚠️ ตรวจเฉพาะ crawl หลายหน้า (ctx.multiPage): inbound นับภายใน crawlId เดียว → crawl
+  // หน้าเดียวจะได้ inbound=0 เสมอ = orphan ปลอม (ดู DetectContext).
   if (
+    ctx.multiPage &&
     !isNoindex(view) &&
     view.httpStatus < 400 &&
     view.inboundInternalLinks === 0

@@ -4,6 +4,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { AxiosResponse } from 'axios';
 import { CrawlerService } from './crawler.service';
 import { crawlResultSchema } from './crawler.schema';
+import type { CrawlResult } from './crawler.schema';
 
 // HTML fixture ครอบคลุมทุกฟิลด์ที่ bot ต้องแกะ (เอกสาร 01 page_snapshots)
 const FIXTURE_HTML = `<!doctype html>
@@ -72,11 +73,13 @@ function makeService(response: AxiosResponse): CrawlerService {
 describe('CrawlerService', () => {
   describe('crawl() — HTML page', () => {
     let service: CrawlerService;
-    let result: Awaited<ReturnType<CrawlerService['crawl']>>;
+    let page: Awaited<ReturnType<CrawlerService['crawl']>>;
+    let result: CrawlResult;
 
     beforeAll(async () => {
       service = makeService(makeResponse(FIXTURE_HTML));
-      result = await service.crawl('https://example.com/seo');
+      page = await service.crawl('https://example.com/seo');
+      result = page.result;
     });
 
     it('แกะ title / meta / canonical / robots (trim ช่องว่าง)', () => {
@@ -122,6 +125,28 @@ describe('CrawlerService', () => {
       expect(result.images.missingAlt).toBe(1);
     });
 
+    it('เก็บรายรูป (imageRows) — src absolute + alt/hasAlt ต่อรูป (→ page_images)', () => {
+      expect(result.imageRows).toHaveLength(2);
+      const a = result.imageRows.find((i) => i.src.endsWith('/a.png'));
+      expect(a).toEqual({
+        src: 'https://example.com/a.png',
+        alt: 'มีคำอธิบาย',
+        hasAlt: true,
+      });
+      const b = result.imageRows.find((i) => i.src.endsWith('/b.png'));
+      expect(b).toEqual({
+        src: 'https://example.com/b.png',
+        alt: null,
+        hasAlt: false,
+      });
+    });
+
+    it('คืน rawHtml ดิบ (สำหรับ R2) แยกจาก CrawlResult', () => {
+      expect(page.rawHtml).toContain('<html');
+      // rawHtml ต้องไม่ถูกยัดลง CrawlResult (กัน bloat returnvalue/response)
+      expect(result).not.toHaveProperty('rawHtml');
+    });
+
     it('คำนวณ wordCount จาก body ที่ตัด script/style แล้ว + contentHash sha1', () => {
       expect(result.wordCount).toBeGreaterThan(0);
       expect(result.bodyText).not.toContain('ไม่ควรถูกนับเป็นคำ');
@@ -147,12 +172,16 @@ describe('CrawlerService', () => {
       const service = makeService(
         makeResponse('{"k":1}', 'application/json', 200),
       );
-      const result = await service.crawl('https://example.com/data.json');
+      const page = await service.crawl('https://example.com/data.json');
+      const result = page.result;
       expect(result.httpStatus).toBe(200);
       expect(result.title).toBeNull();
       expect(result.links).toEqual([]);
+      expect(result.imageRows).toEqual([]);
       expect(result.paragraphs).toEqual([]);
       expect(result.wordCount).toBe(0);
+      // non-HTML → ไม่มี rawHtml ให้ขึ้น R2
+      expect(page.rawHtml).toBeNull();
       // snapshot ขั้นต่ำก็ยังต้องเป็น CrawlResult ที่ valid
       expect(() => crawlResultSchema.parse(result)).not.toThrow();
     });
@@ -163,7 +192,7 @@ describe('CrawlerService', () => {
       const service = makeService(
         makeResponse('<html><body>not found</body></html>', 'text/html', 404),
       );
-      const result = await service.crawl('https://example.com/missing');
+      const { result } = await service.crawl('https://example.com/missing');
       expect(result.httpStatus).toBe(404);
       expect(result.wordCount).toBeGreaterThan(0);
     });
@@ -178,7 +207,7 @@ describe('CrawlerService', () => {
           'TEXT/HTML; charset=UTF-8',
         ),
       );
-      const result = await service.crawl('https://example.com/up');
+      const { result } = await service.crawl('https://example.com/up');
       expect(result.title).toBe('UP');
       expect(result.wordCount).toBeGreaterThan(0);
     });
@@ -195,7 +224,7 @@ describe('CrawlerService', () => {
           'text/html',
         ),
       );
-      const result = await service.crawl('https://example.com/th');
+      const { result } = await service.crawl('https://example.com/th');
       // ผม|ชอบ|กิน|ข้าว|เช้า|นี้ = 6 คำ ; split(' ') เดิมจะได้ 1
       expect(result.wordCount).toBe(6);
     });
@@ -207,7 +236,7 @@ describe('CrawlerService', () => {
           'text/html',
         ),
       );
-      const result = await service.crawl('https://example.com/mix');
+      const { result } = await service.crawl('https://example.com/mix');
       // SEO | คือ | การ | ทำ | เว็บ = 5 คำ ; split(' ') เดิมจะได้ 2
       expect(result.wordCount).toBe(5);
     });
@@ -231,7 +260,7 @@ describe('CrawlerService', () => {
       ['http://x.com', 'http://x.com/'], // http คงเดิม ไม่ถูกบังคับเป็น https
     ])('normalize %s → %s', async (input, expected) => {
       const service = makeService(makeResponse('<html><body>x</body></html>'));
-      const result = await service.crawl(input);
+      const { result } = await service.crawl(input);
       expect(result.url).toBe(expected);
     });
   });

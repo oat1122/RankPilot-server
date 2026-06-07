@@ -81,12 +81,23 @@ export class AnalysisRepo {
     return rows.length > 0;
   }
 
-  /** crawl ล่าสุดของ project (ใช้เมื่อ caller ไม่ระบุ crawlId) — null ถ้ายังไม่เคย crawl. */
+  /**
+   * crawl ล่าสุด "ที่วิเคราะห์ได้" ของ project (ใช้เมื่อ caller ไม่ระบุ crawlId) — null ถ้ายัง
+   * ไม่มี. ⚠️ ต้องกรอง status∈{done,partial} เท่านั้น: ถ้าเอา createdAt ล่าสุดเฉย ๆ จะคว้า
+   * crawl ที่ยัง running (createCrawl เขียน row=running ทันที แต่ snapshot ยัง commit ไม่เสร็จ
+   * — ช่อง race ถ่างขึ้นอีกตอน PSI ทำงาน 10-30s) หรือ failed (rollback แล้วไม่มี snapshot)
+   * มาแทน crawl ดีรอบก่อน → analysis ได้ผลว่าง/เพี้ยน (เอกสาร 00 §4 / 04 §7).
+   */
   async latestCrawlId(projectId: number): Promise<number | null> {
     const rows = await this.db
       .select({ id: crawls.id })
       .from(crawls)
-      .where(eq(crawls.projectId, projectId))
+      .where(
+        and(
+          eq(crawls.projectId, projectId),
+          inArray(crawls.status, ['done', 'partial']),
+        ),
+      )
       .orderBy(desc(crawls.createdAt))
       .limit(1);
     return rows[0]?.id ?? null;

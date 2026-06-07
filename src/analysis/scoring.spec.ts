@@ -136,16 +136,24 @@ describe('detectFindings', () => {
     expect(detectFindings(healthy())).toHaveLength(0);
   });
 
-  it('orphan: indexable + http ok + ไม่มี inbound internal link', () => {
-    const f = detectFindings(healthy({ inboundInternalLinks: 0 }));
+  it('orphan: indexable + http ok + ไม่มี inbound internal link (crawl หลายหน้า)', () => {
+    const f = detectFindings(healthy({ inboundInternalLinks: 0 }), {
+      multiPage: true,
+    });
     const orphan = f.find((x) => x.type === 'orphan');
     expect(orphan).toBeDefined();
     expect(orphan?.severity).toBe('high'); // มี traffic → high
   });
 
+  it('ไม่เป็น orphan ถ้า crawl หน้าเดียว (multiPage=false) แม้ inbound=0', () => {
+    const f = detectFindings(healthy({ inboundInternalLinks: 0 })); // default multiPage=false
+    expect(f.find((x) => x.type === 'orphan')).toBeUndefined();
+  });
+
   it('ไม่เป็น orphan ถ้า noindex', () => {
     const f = detectFindings(
       healthy({ inboundInternalLinks: 0, robotsMeta: 'noindex' }),
+      { multiPage: true },
     );
     expect(f.find((x) => x.type === 'orphan')).toBeUndefined();
     expect(f.find((x) => x.type === 'noindex')).toBeDefined();

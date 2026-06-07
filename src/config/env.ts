@@ -42,6 +42,27 @@ export const envSchema = z.object({
   CRAWLER_MAX_BYTES: z.coerce.number().int().positive().default(5_000_000),
   CRAWLER_MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(5),
 
+  // HTML snapshot storage — เก็บ raw HTML ของ crawl เป็น .html.gz บน local disk (เอกสาร 05 §0/§4).
+  // เลือก disk แทน R2/S3: ไม่มี egress + ไม่ต้องพึ่ง external service/creds. optional + มี default →
+  // worker เขียนได้เสมอ (best-effort, เขียนไม่ได้ = ข้าม html_storage_key=null). บน Railway worker
+  // ชี้ไป mount volume ถาวร. api ไม่ได้ใช้ (เฉพาะ worker persist) แต่ schema ใช้ร่วม (validateEnv ตัวเดียว).
+  HTML_STORAGE_DIR: z.string().min(1).default('storage/html'),
+
+  // PSI (PageSpeed Insights v5 — CWV lcp/cls/inp ลง page_snapshots, เอกสาร 01 §2).
+  // gated ด้วย PSI_ENABLED ∵ call ช้า 10-30s/หน้า → default ปิดไม่ให้หน่วง crawl ปกติ/dev/test.
+  // key optional (PSI ยิงได้แม้ไม่มี key แต่ quota ต่ำกว่า). stringbool กันเคส 'false' ถูกตีเป็น true.
+  PSI_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  PSI_API_KEY: z.string().min(1).optional(),
+  PSI_BASE_URL: z
+    .string()
+    .url()
+    .default('https://www.googleapis.com/pagespeedonline/v5/runPagespeed'),
+  PSI_STRATEGY: z.enum(['mobile', 'desktop']).default('mobile'),
+  PSI_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+
   // Ahrefs API v3 (เอกสาร 03 + 03a) — ดึง keyword ของ URL ผ่าน Site/Keywords Explorer,
   // ยิงจาก worker queue 'ahrefs' (api ≠ worker). ยัง "ไม่ wire" (setup phase) → key เป็น
   // optional: ไม่ใส่ก็ boot ได้ (AhrefsService จะ throw ตอนเรียกจริงในเฟสถัดไป) เหมือนที่

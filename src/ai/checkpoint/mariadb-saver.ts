@@ -233,11 +233,13 @@ export class MariaDbSaver extends BaseCheckpointSaver {
     if (!rows.length) return;
 
     // upsert: special writes (idx<0 จาก WRITES_IDX_MAP) เขียนทับได้ — ตรงกับ official DB saver
+    // ⚠️ ต้อง backtick คอลัมน์ใน VALUES(): `blob` เป็น reserved word ของ MariaDB (type keyword
+    // BLOB) → values(blob) ไม่มี backtick = ER_PARSE_ERROR near 'blob)' (errno 1064).
     await this.db
       .insert(aiCheckpointWrites)
       .values(rows)
       .onDuplicateKeyUpdate({
-        set: { channel: sql`values(channel)`, blob: sql`values(blob)` },
+        set: { channel: sql`values(\`channel\`)`, blob: sql`values(\`blob\`)` },
       });
   }
 

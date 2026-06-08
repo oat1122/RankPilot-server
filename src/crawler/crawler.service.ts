@@ -6,6 +6,12 @@ import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import type { AxiosResponse } from 'axios';
 import { normalizeUrl } from '../common/url';
+import {
+  assertHostAllowed,
+  assertPublicUrl,
+  ssrfSafeHttpAgent,
+  ssrfSafeHttpsAgent,
+} from '../common/ssrf-guard';
 import type {
   CrawledPage,
   CrawlHeadings,
@@ -64,12 +70,22 @@ export class CrawlerService {
    */
   async crawl(rawUrl: string): Promise<CrawledPage> {
     const url = normalizeUrl(rawUrl);
+    // SSRF guard — กันยิง resource ภายใน (localhost/LAN/cloud metadata). โยน SSRF_BLOCKED
+    // → กลายเป็น job.failedReason (ตาม pattern UNSUPPORTED_URL ของ normalizeUrl). ดู common/ssrf-guard.
+    assertPublicUrl(url);
 
     const res = await firstValueFrom(
       this.http.get<string>(url, {
         timeout: this.config.get<number>('CRAWLER_TIMEOUT_MS'),
         maxRedirects: this.config.get<number>('CRAWLER_MAX_REDIRECTS'),
         maxContentLength: this.config.get<number>('CRAWLER_MAX_BYTES'),
+        // SSRF guard ชั้น socket: custom dns lookup ปฏิเสธ IP ภายใน (กัน DNS rebinding)
+        httpAgent: ssrfSafeHttpAgent,
+        httpsAgent: ssrfSafeHttpsAgent,
+        // เช็คทุก redirect hop ด้วย (axios/follow-redirects เรียกก่อนตามแต่ละ Location) —
+        // กัน redirect ไป IP ภายในตรง ๆ ที่ lookup ข้าม (net ไม่ resolve host ที่เป็น IP literal)
+        beforeRedirect: (opts: { hostname?: string; host?: string }) =>
+          assertHostAllowed(opts.hostname ?? opts.host),
         responseType: 'text',
         transformResponse: (d: string) => d, // เก็บ raw HTML — กัน axios แปลงเป็น object
         validateStatus: () => true, // จับทุก status เอง → เก็บ snapshot ได้แม้ 4xx/5xx

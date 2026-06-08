@@ -23,6 +23,9 @@ export const ErrorCode = {
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   // เฉพาะโดเมน — เพิ่มได้เรื่อย ๆ ตาม feature
   CRAWL_JOB_NOT_FOUND: 'CRAWL_JOB_NOT_FOUND',
+  // Projects (เอกสาร 01 §2) — ใช้กับ list/detail + ownership guard. 404 (ไม่ใช่ 403) เมื่อไม่ใช่
+  // เจ้าของ เพื่อไม่เปิดเผยว่า projectId นั้นมีจริง (กัน enumeration ข้าม tenant).
+  PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND',
   // Ahrefs Enrichment (เอกสาร 03) — งบ units/rate-limit/upstream ของ Ahrefs API v3
   AHREFS_JOB_NOT_FOUND: 'AHREFS_JOB_NOT_FOUND',
   AHREFS_BUDGET_EXCEEDED: 'AHREFS_BUDGET_EXCEEDED', // เกินเพดาน units/เดือน (กันก่อนยิง)
@@ -58,6 +61,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
   SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   CRAWL_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  PROJECT_NOT_FOUND: HttpStatus.NOT_FOUND,
   AHREFS_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
   AHREFS_BUDGET_EXCEEDED: HttpStatus.TOO_MANY_REQUESTS,
   AHREFS_RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
@@ -88,6 +92,7 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   INTERNAL_ERROR: 'Internal server error',
   SERVICE_UNAVAILABLE: 'Service temporarily unavailable',
   CRAWL_JOB_NOT_FOUND: 'Crawl job not found',
+  PROJECT_NOT_FOUND: 'Project not found',
   AHREFS_JOB_NOT_FOUND: 'Ahrefs enrichment job not found',
   AHREFS_BUDGET_EXCEEDED: 'Ahrefs monthly unit budget exceeded',
   AHREFS_RATE_LIMITED: 'Ahrefs API rate limited',

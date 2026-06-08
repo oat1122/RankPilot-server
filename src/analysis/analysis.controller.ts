@@ -6,9 +6,11 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
+import { ProjectAccessGuard } from '../projects/project-access.guard';
 import {
   CreateAnalysisDto,
   ListFindingsQueryDto,
@@ -30,6 +32,8 @@ import { AnalysisService } from './analysis.service';
 @ApiTags('analysis')
 @ApiBearerAuth()
 @ApiStandardErrorResponses()
+// multi-tenant: เฉพาะเจ้าของ projectId เข้าถึงได้ (เอกสาร 05 §4) — guard มาจาก ProjectsModule (@Global)
+@UseGuards(ProjectAccessGuard)
 @Controller('projects/:projectId/analysis')
 export class AnalysisController {
   constructor(private readonly analysis: AnalysisService) {}

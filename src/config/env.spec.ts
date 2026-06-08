@@ -16,6 +16,12 @@ describe('validateEnv', () => {
     expect(typeof env.CRAWLER_USER_AGENT).toBe('string');
   });
 
+  it('ค่า default ของ THROTTLE_* (rate limit) coerce ถูกชนิด', () => {
+    const env = validateEnv({ ...base });
+    expect(env.THROTTLE_TTL_MS).toBe(60_000);
+    expect(env.THROTTLE_LIMIT).toBe(120);
+  });
+
   it('coerce ตัวเลขจาก string env', () => {
     const env = validateEnv({
       ...base,
@@ -73,6 +79,28 @@ describe('validateEnv', () => {
     it('ปฏิเสธเมื่อ DATABASE_URL หาย', () => {
       const noDb = { NODE_ENV: 'test', REDIS_URL: 'redis://localhost:6379' };
       expect(() => validateEnv(noDb)).toThrow(/DATABASE_URL/);
+    });
+  });
+
+  describe('CLERK_SECRET_KEY', () => {
+    it('dev/test ไม่ตั้งก็ผ่าน (ClerkAuthGuard dev-bypass)', () => {
+      expect(() => validateEnv({ ...base })).not.toThrow();
+    });
+
+    it('prod ต้องมี — ขาด = fail-fast (secure-by-default ตอน deploy)', () => {
+      expect(() => validateEnv({ ...base, NODE_ENV: 'production' })).toThrow(
+        /CLERK_SECRET_KEY/,
+      );
+    });
+
+    it('prod ที่ตั้ง key แล้วผ่าน', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          NODE_ENV: 'production',
+          CLERK_SECRET_KEY: 'sk_test_abc123',
+        }),
+      ).not.toThrow();
     });
   });
 

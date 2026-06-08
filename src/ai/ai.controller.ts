@@ -7,9 +7,11 @@ import {
   Post,
   Put,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
+import { ProjectAccessGuard } from '../projects/project-access.guard';
 import {
   CreateAiAuditDto,
   ListRecommendationsQueryDto,
@@ -41,6 +43,8 @@ import { AiConfigService } from './ai-config.service';
 @ApiTags('ai')
 @ApiBearerAuth()
 @ApiStandardErrorResponses()
+// multi-tenant: เฉพาะเจ้าของ projectId เข้าถึงได้ (เอกสาร 05 §4) — guard มาจาก ProjectsModule (@Global)
+@UseGuards(ProjectAccessGuard)
 @Controller('projects/:projectId/ai')
 export class AiController {
   constructor(

@@ -35,6 +35,13 @@ export const envSchema = z.object({
   // ตอบ 503 เร็ว ๆ แทนปล่อยค้างจน client abort (เอกสาร 03 §1 / 00 §4).
   QUEUE_ENQUEUE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
+  // Rate limiting (security baseline) — ThrottlerModule ฝั่ง api เท่านั้น (worker ไม่มี HTTP).
+  // กัน abuse/DoS + brute-force ตอนต่อ auth. ttl เป็น ms (ThrottlerModule v6). default = 120 req/นาที
+  // ต่อ IP ทั้งแอป; endpoint อ่อนไหว (POST /crawls) ตั้งเพดานเข้มกว่าด้วย @Throttle (hardcode ∵
+  // decorator อ่าน ConfigService ไม่ได้ — constraint เดียวกับ Ahrefs limiter ด้านล่าง).
+  THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
+  THROTTLE_LIMIT: z.coerce.number().int().positive().default(120),
+
   // Crawler bot tunables (worker — เอกสาร 00 §0 [1] / 01 page_snapshots)
   CRAWLER_USER_AGENT: z
     .string()
@@ -151,6 +158,15 @@ export const envSchema = z.object({
     .string()
     .url()
     .default('https://api.smith.langchain.com'),
+
+  // Clerk auth (เอกสาร 05 §4) — auth ข้ามโดเมนด้วย Bearer JWT (api ≠ cookie). secret key ใช้
+  // verify session token ฝั่ง backend (@clerk/backend verifyToken → ดึง JWKS ของ instance).
+  // optional แบบเดียวกับ API key อื่น: dev/test ไม่ตั้ง → ClerkAuthGuard เข้าโหมด dev-bypass
+  // (inject dev user) แอป/jest ยังรันได้; prod บังคับมีผ่าน validateEnv (secure-by-default ตอน deploy).
+  CLERK_SECRET_KEY: z.string().min(1).optional(),
+  // azp allowlist (comma-sep) — verifyToken ใช้ยืนยันว่า token ออกจาก frontend ที่อนุญาตเท่านั้น
+  // (กัน token จากแอปอื่นใน Clerk instance เดียวกัน). ว่าง = ไม่ตรวจ azp.
+  CLERK_AUTHORIZED_PARTIES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -163,6 +179,15 @@ export function validateEnv(config: Record<string, unknown>): Env {
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
     throw new Error(`Invalid environment variables:\n${details}`);
+  }
+  // ข้อบังคับข้ามฟิลด์: prod ต้องมี CLERK_SECRET_KEY (auth secure-by-default ตอน deploy —
+  // เอกสาร 05 §4) — กันพลาด deploy แล้ว ClerkAuthGuard ตกไป dev-bypass เปิด endpoint public.
+  // dev/test ไม่บังคับ (bypass เป็น dev user). เช็คตรงนี้แทน superRefine เพื่อคง envSchema เป็น
+  // ZodObject (ฟีเจอร์ .shape ฯลฯ ใช้ได้) + ข้อความ error สไตล์เดียวกับด้านบน.
+  if (parsed.data.NODE_ENV === 'production' && !parsed.data.CLERK_SECRET_KEY) {
+    throw new Error(
+      'Invalid environment variables:\n  - CLERK_SECRET_KEY: required in production (auth secure-by-default — เอกสาร 05 §4)',
+    );
   }
   return parsed.data;
 }

@@ -5,6 +5,7 @@ import type { AxiosResponse } from 'axios';
 import { CrawlerService } from './crawler.service';
 import { crawlResultSchema } from './crawler.schema';
 import type { CrawlResult } from './crawler.schema';
+import { ssrfSafeHttpAgent, ssrfSafeHttpsAgent } from '../common/ssrf-guard';
 
 // HTML fixture ครอบคลุมทุกฟิลด์ที่ bot ต้องแกะ (เอกสาร 01 page_snapshots)
 const FIXTURE_HTML = `<!doctype html>
@@ -256,12 +257,71 @@ describe('CrawlerService', () => {
     it.each([
       ['example.com', 'https://example.com/'],
       ['example.com:8080', 'https://example.com:8080/'], // bare domain + port ต้องไม่ถูกมองเป็น scheme
-      ['localhost:3000', 'https://localhost:3000/'],
+      ['myhost:3000', 'https://myhost:3000/'], // single-label host + port (เดิมใช้ localhost — ย้ายไปเทสที่ ssrf-guard.spec ∵ guard บล็อก localhost)
       ['http://x.com', 'http://x.com/'], // http คงเดิม ไม่ถูกบังคับเป็น https
     ])('normalize %s → %s', async (input, expected) => {
       const service = makeService(makeResponse('<html><body>x</body></html>'));
       const { result } = await service.crawl(input);
       expect(result.url).toBe(expected);
+    });
+  });
+
+  describe('crawl() — guard wiring (SSRF + decompression-size cap)', () => {
+    // options ที่ crawl() ส่งให้ axios — เฉพาะ field ที่ทดสอบ (กัน any จาก mock.calls)
+    interface GetOpts {
+      maxContentLength: number;
+      httpAgent: unknown;
+      httpsAgent: unknown;
+      beforeRedirect: (o: { hostname?: string; host?: string }) => void;
+    }
+
+    // ประกอบ service + คืน mock fn ของ http.get เพื่อตรวจ options ที่ส่งให้ axios
+    function makeWithSpy() {
+      const get = jest
+        .fn()
+        .mockReturnValue(of(makeResponse('<html><body>x</body></html>')));
+      const http = { get } as unknown as HttpService;
+      const defaults: Record<string, unknown> = {
+        CRAWLER_USER_AGENT: 'test-agent',
+        CRAWLER_TIMEOUT_MS: 15000,
+        CRAWLER_MAX_BYTES: 5_000_000,
+        CRAWLER_MAX_REDIRECTS: 5,
+      };
+      const config = {
+        get: (k: string) => defaults[k],
+      } as unknown as ConfigService;
+      return { service: new CrawlerService(http, config), get };
+    }
+
+    it('ส่ง maxContentLength (กัน decompression bomb) + ssrf agents + beforeRedirect ให้ axios', async () => {
+      const { service, get } = makeWithSpy();
+      await service.crawl('https://example.com/');
+      const opts = (get.mock.calls[0] as unknown[])[1] as GetOpts;
+      // axios enforce maxContentLength บน stream "หลัง" gunzip (http adapter) → gzip bomb ถูกตัดที่เพดานนี้
+      expect(opts.maxContentLength).toBe(5_000_000);
+      expect(opts.httpAgent).toBe(ssrfSafeHttpAgent);
+      expect(opts.httpsAgent).toBe(ssrfSafeHttpsAgent);
+      expect(typeof opts.beforeRedirect).toBe('function');
+    });
+
+    it('beforeRedirect บล็อก redirect ไป host ภายใน แต่ปล่อย host สาธารณะ', async () => {
+      const { service, get } = makeWithSpy();
+      await service.crawl('https://example.com/');
+      const opts = (get.mock.calls[0] as unknown[])[1] as GetOpts;
+      expect(() =>
+        opts.beforeRedirect({ hostname: '169.254.169.254' }),
+      ).toThrow(/SSRF_BLOCKED/);
+      expect(() =>
+        opts.beforeRedirect({ hostname: 'example.org' }),
+      ).not.toThrow();
+    });
+
+    it('ปฏิเสธ (ไม่ยิง http) เมื่อ URL ชี้ host ภายใน', async () => {
+      const { service, get } = makeWithSpy();
+      await expect(service.crawl('http://127.0.0.1:6379/')).rejects.toThrow(
+        /SSRF_BLOCKED/,
+      );
+      expect(get).not.toHaveBeenCalled();
     });
   });
 

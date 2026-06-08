@@ -5,9 +5,11 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
+import { ProjectAccessGuard } from '../projects/project-access.guard';
 import {
   CreateEnrichDto,
   EnrichKeywordsDto,
@@ -32,6 +34,8 @@ import { EnrichService } from './enrich.service';
 @ApiTags('ahrefs')
 @ApiBearerAuth()
 @ApiStandardErrorResponses()
+// multi-tenant: เฉพาะเจ้าของ projectId เข้าถึงได้ (เอกสาร 05 §4) — guard มาจาก ProjectsModule (@Global)
+@UseGuards(ProjectAccessGuard)
 @Controller('projects/:projectId/ahrefs')
 export class EnrichController {
   constructor(private readonly enrich: EnrichService) {}

@@ -387,6 +387,8 @@ export const aiRuns = mysqlTable('ai_runs', {
   projectId: fk('project_id').notNull(),
   pageId: fk('page_id'),
   graph: varchar('graph', { length: 64 }).notNull(), // 'page_audit'
+  // snapshot role→modelId ที่ใช้รอบนั้น (เอกสาร 01 / 02 §6) → audit ต้นทุน/คุณภาพย้อนหลัง
+  models: json('models'), // { reasoner, worker, cheap }
   langsmithRunId: varchar('langsmith_run_id', { length: 64 }),
   status: mysqlEnum('status', ['running', 'done', 'failed', 'awaiting_review'])
     .notNull()

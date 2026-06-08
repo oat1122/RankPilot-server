@@ -32,6 +32,10 @@ export const ErrorCode = {
   // Analysis (เอกสาร 04 §7) — stage [3] วิเคราะห์ crawl/enrich → seo_scores + audit_findings
   ANALYSIS_JOB_NOT_FOUND: 'ANALYSIS_JOB_NOT_FOUND', // jobId ที่ขอสถานะไม่มีใน queue 'analysis'
   ANALYSIS_NO_CRAWL: 'ANALYSIS_NO_CRAWL', // โปรเจคยังไม่มี crawl ให้วิเคราะห์ (ต้อง crawl ก่อน)
+  // AI Advisor (เอกสาร 02) — stage [4] รัน graph page_audit ผ่าน OpenRouter (live)
+  AI_JOB_NOT_FOUND: 'AI_JOB_NOT_FOUND', // jobId ที่ขอสถานะไม่มีใน queue 'ai'
+  AI_NO_CRAWL: 'AI_NO_CRAWL', // ไม่มี crawl/page ให้ audit (ต้อง crawl ก่อน)
+  AI_NOT_CONFIGURED: 'AI_NOT_CONFIGURED', // OPENROUTER_API_KEY ไม่ได้ตั้งค่า (เอกสาร 02 §9)
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -57,6 +61,9 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   AHREFS_API_ERROR: HttpStatus.BAD_GATEWAY,
   ANALYSIS_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
   ANALYSIS_NO_CRAWL: HttpStatus.UNPROCESSABLE_ENTITY,
+  AI_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  AI_NO_CRAWL: HttpStatus.UNPROCESSABLE_ENTITY,
+  AI_NOT_CONFIGURED: HttpStatus.SERVICE_UNAVAILABLE,
 };
 
 /** ข้อความ default ต่อ code (override ได้ตอน throw). */
@@ -80,6 +87,10 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   AHREFS_API_ERROR: 'Ahrefs API request failed',
   ANALYSIS_JOB_NOT_FOUND: 'Analysis job not found',
   ANALYSIS_NO_CRAWL: 'No crawl available to analyze — run a crawl first',
+  AI_JOB_NOT_FOUND: 'AI job not found',
+  AI_NO_CRAWL: 'No crawl available to audit — run a crawl first',
+  AI_NOT_CONFIGURED:
+    'AI advisor not configured — OPENROUTER_API_KEY is missing',
 };
 
 /** lookup: HTTP status → ErrorCode (เฉพาะที่ map ตรง ๆ ได้). */

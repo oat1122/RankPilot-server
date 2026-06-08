@@ -10,7 +10,7 @@ async function bootstrap() {
   const app = await NestFactory.createApplicationContext(WorkerModule);
   app.enableShutdownHooks();
   new Logger('Worker').log(
-    'RankPilot worker started — consuming BullMQ "crawl" (เอกสาร 00 §4)',
+    'RankPilot worker started — consuming BullMQ "crawl"/"ahrefs"/"analysis"/"ai" (เอกสาร 00 §4)',
   );
 }
 

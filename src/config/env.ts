@@ -100,6 +100,17 @@ export const envSchema = z.object({
     .int()
     .positive()
     .default(7 * 24 * 60 * 60),
+
+  // OpenRouter (เอกสาร 02 §9) — LLM provider เดียวของ stage [4] AI Advisor, ยิงจาก worker
+  // queue 'ai' (api ≠ worker). key optional แบบเดียวกับ AHREFS_API_KEY: ไม่ใส่ก็ boot ได้
+  // (mkModel จะโยน AI_NOT_CONFIGURED ตอนเรียกจริงในโหนด LLM). base url default ของ OpenRouter.
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
+  // attribution headers → โผล่ใน OpenRouter rankings (HTTP-Referer / X-Title — เอกสาร 02 §2).
+  OPENROUTER_SITE_URL: z.string().url().default('https://app.rankpilot'),
+  OPENROUTER_APP_TITLE: z.string().min(1).default('RankPilot'),
+  // เพดานเวลาต่อ LLM call (ms) — กันโหนดค้างเมื่อ provider ช้า/ค้าง.
+  OPENROUTER_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
 });
 
 export type Env = z.infer<typeof envSchema>;

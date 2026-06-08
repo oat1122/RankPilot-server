@@ -1,0 +1,1 @@
+ALTER TABLE `ai_runs` ADD `models` json;

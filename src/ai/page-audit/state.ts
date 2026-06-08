@@ -4,7 +4,8 @@ import { z } from 'zod';
 /**
  * PageAuditState + Zod schemas — เอกสาร 02 §1.
  * Phase 1 = diagnosis/draft/critique/priority. Phase 2 (fan-out) ⊕ intent/gaps
- * (intentMatch ∥ contentGap หลัง diagnose). fanout + awaitReview ยังเลื่อนไป Phase 3-4.
+ * (intentMatch ∥ contentGap หลัง diagnose). Phase 3 ⊕ fanout (queryFanout หลัง critique
+ * loop). Phase 4 (HITL) ⊕ reviewDecision (ผลอนุมัติจาก awaitReview interrupt → resume).
  */
 
 export const DiagnosisSchema = z.object({
@@ -61,6 +62,23 @@ export const ContentGapSchema = z.object({
 });
 export type ContentGaps = z.infer<typeof ContentGapSchema>;
 
+/**
+ * queryFanout (worker, Phase 3) — เดา sub-question ที่ผู้ใช้ AI search (ChatGPT/Perplexity)
+ * จะถามกับหัวข้อนี้ → ใช้เพิ่ม section/FAQ ให้ถูก cite + แนะ structured-data schema ที่ควรใส่
+ * (เอกสาร 02 §0/§1/§7). suggestedSchema จำกัด enum เพื่อ map ตรงกับ JSON-LD @type ที่รองรับ.
+ */
+export const FanoutSchema = z.object({
+  subQuestions: z.array(z.string()),
+  suggestedSchema: z.array(z.enum(['FAQPage', 'HowTo', 'Article'])),
+});
+export type Fanout = z.infer<typeof FanoutSchema>;
+
+/**
+ * ผลรีวิวจาก HITL (Phase 4, เอกสาร 02 §8) — user กดใน dashboard แล้ว resume graph.
+ * 'approve' → persist เขียน recs (status='suggested'); 'reject' → ทิ้ง draft ไม่เขียน.
+ */
+export type ReviewDecision = 'approve' | 'reject';
+
 /** on-page + ranking + score ที่ loadContext ดึงจาก DB แล้วป้อนเข้า prompt (เอกสาร 02 §0). */
 export interface PageContext {
   pageId: number;
@@ -85,10 +103,12 @@ export interface PageContext {
   // Phase 2 (fan-out): คู่แข่งใน SERP ของ primary keyword (ป้อน contentGap) — ตัดโดเมนเราออกแล้ว
   competitors: { domain: string; url: string; position: number }[];
   // Phase 2: เพจอื่นในโปรเจคที่ rank คีย์เดียวกัน (candidate cannibalization → intentMatch ตัดสิน)
+  // Phase 6: similarity = cosine กับหน้านี้ (VECTOR); null = ยังไม่มี embedding/ปิด Voyage
   cannibalizationCandidates: {
     pageId: number;
     url: string;
     position: number | null;
+    similarity?: number | null;
   }[];
 }
 
@@ -109,7 +129,12 @@ export const PageAuditState = Annotation.Root({
   draft: Annotation<MetaDraft>(),
   critique: Annotation<Critique>(),
   draftAttempts: Annotation<number>({ reducer: sumReducer, default: () => 0 }),
+  // Phase 3: queryFanout เขียน channel 'fanout' (≠ ชื่อโหนด 'queryFanout' — กัน collision)
+  fanout: Annotation<Fanout>(),
   priority: Annotation<number>(),
+  // Phase 4 (HITL): awaitReview เขียนหลัง resume — 'approve' (default) → persist เขียน recs,
+  // 'reject' → persist ข้าม (ทิ้ง draft). undefined = HITL ปิด หรือยังไม่ถึง awaitReview.
+  reviewDecision: Annotation<ReviewDecision>(),
   tokensIn: Annotation<number>({ reducer: sumReducer, default: () => 0 }),
   tokensOut: Annotation<number>({ reducer: sumReducer, default: () => 0 }),
 });

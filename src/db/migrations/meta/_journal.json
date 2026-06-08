@@ -36,6 +36,13 @@
       "when": 1780889390491,
       "tag": "0004_huge_ender_wiggin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1780898201856,
+      "tag": "0005_certain_starbolt",
+      "breakpoints": true
     }
   ]
 }

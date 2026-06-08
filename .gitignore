@@ -21,3 +21,8 @@ npm-debug.log*
 
 # HTML snapshot storage (HTML_STORAGE_DIR default) — raw .html.gz ของ crawl, ไม่ commit
 /storage
+
+
+# .graphifyignore
+*.generated.py
+graphify-out

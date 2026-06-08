@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { AppException, ErrorCode } from '../common/http';
 import { DB } from '../db/db.module';
 import type { Db } from '../db/db.module';
+import { EmbeddingService } from './embeddings/embedding.service';
 import {
   aiRecommendations,
   aiRuns,
@@ -21,6 +22,7 @@ import {
 import { aggregatePageSignals } from '../analysis/analysis.repo';
 import type { PageAuditStateType, PageContext } from './page-audit/state';
 import { toRecommendationRows } from './page-audit/recommendations';
+import { isApproved } from './page-audit/review';
 
 /* ---------- json coercion (driver คืน json column เป็น string บางครั้ง — ดู memory) ---------- */
 
@@ -73,6 +75,7 @@ function cannibalizationVerdict(
 
 type RecType = (typeof aiRecommendations.type.enumValues)[number];
 type RecStatus = (typeof aiRecommendations.status.enumValues)[number];
+type RunStatus = (typeof aiRuns.status.enumValues)[number];
 
 export interface RecommendationListItem {
   id: number;
@@ -85,13 +88,29 @@ export interface RecommendationListItem {
   createdAt: Date;
 }
 
+/** 1 ai_run สำหรับ dashboard (Phase 4: list รอรีวิว + proposal ที่ค้าง). */
+export interface RunListItem {
+  id: number;
+  pageId: number | null;
+  graph: string;
+  status: string;
+  reviewPayload: unknown;
+  startedAt: Date;
+  finishedAt: Date | null;
+}
+
 /**
  * AiRepo — รวม Drizzle query ของ stage [4] AI Advisor (อ่าน context จาก crawl/enrich/analysis
  * + เขียน ai_runs / ai_recommendations). มิเรอร์ AnalysisRepo. inject DB ผ่าน token @Global.
  */
 @Injectable()
 export class AiRepo {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  private readonly logger = new Logger(AiRepo.name);
+
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly embeddings: EmbeddingService,
+  ) {}
 
   /** มี project นี้จริงไหม (ให้ producer ตอบ NOT_FOUND ก่อน enqueue). */
   async projectExists(projectId: number): Promise<boolean> {
@@ -142,6 +161,7 @@ export class AiRepo {
     const snapRows = await this.db
       .select({
         snapshotId: pageSnapshots.id,
+        crawlId: pageSnapshots.crawlId,
         url: pages.url,
         projectId: pages.projectId,
         projectDomain: projects.domain,
@@ -224,16 +244,52 @@ export class AiRepo {
           )
         : [];
 
+    const headings = toHeadings(snap.headings);
+    const paragraphs =
+      toStringArray(parseJson(snap.paragraphs))?.slice(0, MAX_PARAGRAPHS) ??
+      null;
+
+    // Phase 6 (semantic): embed หน้า (Voyage) + เติม cosine similarity ให้ candidate cannibalization
+    // (เอกสาร 01 §4). best-effort: ไม่มี VOYAGE_API_KEY / Voyage ล้ม / DB error → ข้าม (similarity คง
+    // เป็น null เหมือน Phase 2 — ไม่ทำให้ audit ล้ม). embed เฉพาะเมื่อมี candidate (คุม Voyage cost).
+    if (this.embeddings.isConfigured() && cannibalizationCandidates.length) {
+      try {
+        const text = this.embeddings.buildText({
+          title: snap.title,
+          h1: snap.h1,
+          headings,
+          paragraphs,
+        });
+        if (text) {
+          const targetVec = await this.embeddings.ensureEmbedding({
+            projectId: snap.projectId,
+            pageId,
+            crawlId: crawlId ?? snap.crawlId,
+            text,
+          });
+          const sims = await this.embeddings.cosineForCandidates(
+            targetVec,
+            cannibalizationCandidates.map((c) => c.pageId),
+          );
+          for (const c of cannibalizationCandidates)
+            c.similarity = sims.get(c.pageId) ?? null;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `embedding/similarity best-effort ล้มเหลว (page ${pageId}): ${msg}`,
+        );
+      }
+    }
+
     return {
       pageId,
       url: snap.url,
       title: snap.title,
       metaDescription: snap.metaDescription,
       h1: snap.h1,
-      headings: toHeadings(snap.headings),
-      paragraphs:
-        toStringArray(parseJson(snap.paragraphs))?.slice(0, MAX_PARAGRAPHS) ??
-        null,
+      headings,
+      paragraphs,
       wordCount: snap.wordCount,
       schemaTypes: toStringArray(parseJson(snap.schemaTypes)),
       primaryKeyword,
@@ -350,9 +406,10 @@ export class AiRepo {
   }
 
   /**
-   * persist ผลรอบนั้น (เรียกในโหนด persist): อัปเดต run → done + token + finishedAt,
-   * bulk-insert ai_recommendations แล้ว (Phase 2) เขียนตารางเสริม content_gaps +
-   * cannibalization_groups/members. status default 'suggested' จาก schema.
+   * persist ผลรอบนั้น (เรียกในโหนด persist): ปิด run → done + token + finishedAt + เคลียร์
+   * review_payload. Phase 4 (HITL): ถ้า reject (isApproved=false) → ไม่เขียนข้อเสนอใด ๆ (ทิ้ง draft);
+   * approve หรือ HITL ปิด → bulk-insert ai_recommendations + ตารางเสริม content_gaps +
+   * cannibalization_groups/members (status default 'suggested' จาก schema).
    */
   async persistRun(s: PageAuditStateType): Promise<void> {
     await this.db
@@ -361,9 +418,12 @@ export class AiRepo {
         status: 'done',
         inputTokens: s.tokensIn ?? 0,
         outputTokens: s.tokensOut ?? 0,
+        reviewPayload: null,
         finishedAt: new Date(),
       })
       .where(eq(aiRuns.id, s.runId));
+
+    if (!isApproved(s)) return;
 
     const rows = toRecommendationRows(s);
     if (rows.length)
@@ -378,6 +438,72 @@ export class AiRepo {
 
     await this.persistContentGaps(s);
     await this.persistCannibalization(s);
+  }
+
+  /**
+   * Phase 4 (HITL): graph interrupt ที่ awaitReview → ค้าง run รอ user อนุมัติใน dashboard.
+   * เก็บ proposal (= toRecommendationRows ตอน interrupt) ลง review_payload ให้ dashboard โชว์
+   * ก่อน approve/reject + token ที่ใช้ถึงตอนนี้ (persist ยังไม่รัน). ยังไม่ตั้ง finishedAt.
+   */
+  async setAwaitingReview(
+    runId: number,
+    input: { reviewPayload: unknown; tokensIn: number; tokensOut: number },
+  ): Promise<void> {
+    await this.db
+      .update(aiRuns)
+      .set({
+        status: 'awaiting_review',
+        reviewPayload: input.reviewPayload,
+        inputTokens: input.tokensIn,
+        outputTokens: input.tokensOut,
+      })
+      .where(eq(aiRuns.id, runId));
+  }
+
+  /** run ที่ approve/reject ได้ (ต้อง awaiting_review + อยู่ในโปรเจคนี้) — null ถ้าไม่พบ/ผิดโปรเจค. */
+  async getReviewableRun(
+    runId: number,
+    projectId: number,
+  ): Promise<{ id: number; pageId: number | null; status: string } | null> {
+    const rows = await this.db
+      .select({ id: aiRuns.id, pageId: aiRuns.pageId, status: aiRuns.status })
+      .from(aiRuns)
+      .where(and(eq(aiRuns.id, runId), eq(aiRuns.projectId, projectId)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** ai_runs ของ project (กรอง status) — dashboard ดึงรายการรอรีวิว (awaiting_review) + proposal. */
+  async listRuns(
+    projectId: number,
+    opts: { status?: string; limit: number; offset: number },
+  ): Promise<{ items: RunListItem[]; total: number }> {
+    const conds = [eq(aiRuns.projectId, projectId)];
+    if (opts.status) conds.push(eq(aiRuns.status, opts.status as RunStatus));
+    const where = and(...conds);
+
+    const items = await this.db
+      .select({
+        id: aiRuns.id,
+        pageId: aiRuns.pageId,
+        graph: aiRuns.graph,
+        status: aiRuns.status,
+        reviewPayload: aiRuns.reviewPayload,
+        startedAt: aiRuns.startedAt,
+        finishedAt: aiRuns.finishedAt,
+      })
+      .from(aiRuns)
+      .where(where)
+      .orderBy(desc(aiRuns.startedAt))
+      .limit(opts.limit)
+      .offset(opts.offset);
+
+    const totalRows = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(aiRuns)
+      .where(where);
+
+    return { items, total: Number(totalRows[0].n) };
   }
 
   /**
@@ -419,11 +545,14 @@ export class AiRepo {
       .$returningId();
 
     await this.db.insert(cannibalizationMembers).values([
+      // หน้านี้ = anchor ของกลุ่ม (similarity = null); candidate ถือ cosine กับ anchor (Phase 6)
       { groupId, pageId: s.pageId, position: s.context?.position ?? null },
       ...candidates.map((c) => ({
         groupId,
         pageId: c.pageId,
         position: c.position ?? null,
+        // decimal(5,4) — Drizzle รับ string; null เมื่อยังไม่มี embedding/ปิด Voyage
+        similarity: c.similarity != null ? c.similarity.toFixed(4) : null,
       })),
     ]);
   }

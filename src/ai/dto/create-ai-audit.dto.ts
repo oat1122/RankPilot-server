@@ -40,3 +40,29 @@ export const listRecommendationsQuerySchema = z.object({
 export class ListRecommendationsQueryDto extends createZodDto(
   listRecommendationsQuerySchema,
 ) {}
+
+/** ผลรีวิวของ user (Phase 4 HITL — ตรงกับ ReviewDecision ฝั่ง graph). */
+export const reviewDecisionEnum = z.enum(['approve', 'reject']);
+
+/** สถานะ ai_runs (ตรงกับ enum ai_runs.status ใน schema). */
+export const runStatusEnum = z.enum([
+  'running',
+  'done',
+  'failed',
+  'awaiting_review',
+]);
+
+/** GET runs — filter ตาม status (dashboard ดึงรายการรอรีวิว). */
+export const listRunsQuerySchema = z.object({
+  status: runStatusEnum.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+export class ListRunsQueryDto extends createZodDto(listRunsQuerySchema) {}
+
+/** POST runs/:runId/review — user อนุมัติ/ปฏิเสธ draft ใน dashboard → resume graph (Phase 4). */
+export const reviewRunSchema = z.object({
+  decision: reviewDecisionEnum,
+  note: z.string().max(1000).optional(),
+});
+export class ReviewRunDto extends createZodDto(reviewRunSchema) {}

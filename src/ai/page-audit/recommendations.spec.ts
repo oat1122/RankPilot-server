@@ -75,4 +75,33 @@ describe('toRecommendationRows', () => {
       'priority',
     ]);
   });
+
+  it('Phase 3: query_fanout แทรกหลัง meta_draft ก่อน priority (output = ทั้งก้อน fanout)', () => {
+    const fanout = {
+      subQuestions: ['รองเท้าวิ่งรุ่นไหนดี?'],
+      suggestedSchema: ['FAQPage'],
+    };
+    const s = {
+      pageId: 8,
+      diagnosis: { primaryKeyword: 'kw', reasoning: 'r', issues: [] },
+      draft: { title: 'T', metaDescription: 'M', rationale: 'why' },
+      fanout,
+      priority: 7,
+    } as unknown as PageAuditStateType;
+
+    const rows = toRecommendationRows(s);
+    expect(rows.map((r) => r.type)).toEqual([
+      'diagnosis',
+      'title_draft',
+      'meta_draft',
+      'query_fanout',
+      'priority',
+    ]);
+    expect(rows[3].output).toEqual(fanout);
+  });
+
+  it('query_fanout ถูกข้ามเมื่อยังไม่มี fanout', () => {
+    const rows = toRecommendationRows({ pageId: 9 } as PageAuditStateType);
+    expect(rows.map((r) => r.type)).not.toContain('query_fanout');
+  });
 });

@@ -6,13 +6,20 @@ import { Queue } from 'bullmq';
 import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 import { AiRepo } from './ai.repo';
-import type { PageAuditJobData, PageAuditSummary } from './ai.runner';
+import type {
+  PageAuditJobData,
+  PageAuditResumeJobData,
+  PageAuditSummary,
+} from './ai.runner';
 import type {
   CreateAiAuditDto,
   ListRecommendationsQueryDto,
+  ListRunsQueryDto,
+  ReviewRunDto,
 } from './dto/create-ai-audit.dto';
 
-type AiQueue = Queue<PageAuditJobData, PageAuditSummary>;
+type AiJobData = PageAuditJobData | PageAuditResumeJobData;
+type AiQueue = Queue<AiJobData, PageAuditSummary>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม. */
 const QUEUE_ERROR_LOG_THROTTLE_MS = 10_000;
@@ -133,5 +140,69 @@ export class AiService implements OnModuleInit {
       offset,
     });
     return { items, total, limit, offset };
+  }
+
+  /** ai_runs ของ project (กรอง status เช่น awaiting_review) + proposal ที่ค้าง — Dashboard (Phase 4). */
+  async listRuns(projectId: number, query: ListRunsQueryDto) {
+    const limit = query.limit ?? DEFAULT_RECS_LIMIT;
+    const offset = query.offset ?? 0;
+    const { items, total } = await this.repo.listRuns(projectId, {
+      status: query.status,
+      limit,
+      offset,
+    });
+    return { items, total, limit, offset };
+  }
+
+  /**
+   * Phase 4 (HITL): user อนุมัติ/ปฏิเสธ draft → enqueue 'resume-review' ให้ worker resume graph
+   * (api ≠ worker — เอกสาร 00 §4). ตรวจ run ต้อง awaiting_review + อยู่ในโปรเจคนี้ + มี pageId ก่อน.
+   */
+  async review(projectId: number, runId: number, dto: ReviewRunDto) {
+    const run = await this.repo.getReviewableRun(runId, projectId);
+    if (!run)
+      throw new AppException(
+        ErrorCode.AI_RUN_NOT_FOUND,
+        `ai run ${runId} not found`,
+      );
+    if (run.status !== 'awaiting_review')
+      throw new AppException(
+        ErrorCode.AI_RUN_NOT_REVIEWABLE,
+        `ai run ${runId} อยู่สถานะ '${run.status}' (ต้อง 'awaiting_review' ถึงจะรีวิวได้)`,
+      );
+    if (run.pageId == null)
+      throw new AppException(
+        ErrorCode.AI_RUN_NOT_REVIEWABLE,
+        `ai run ${runId} ไม่มี pageId — resume ไม่ได้`,
+      );
+
+    const timeoutMs =
+      this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
+    try {
+      const job = await withTimeout(
+        this.queue.add('resume-review', {
+          projectId,
+          pageId: run.pageId,
+          runId,
+          decision: dto.decision,
+          note: dto.note,
+        } satisfies PageAuditResumeJobData),
+        timeoutMs,
+      );
+      return {
+        runId,
+        decision: dto.decision,
+        jobId: job.id ?? null,
+        status: 'queued' as const,
+      };
+    } catch (err) {
+      const reason =
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      this.logger.error(`enqueue ai review failed: ${reason}`);
+      throw new AppException(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'ตั้งคิวรีวิว AI ไม่สำเร็จ (queue ไม่พร้อม) — โปรดลองใหม่อีกครั้ง',
+      );
+    }
   }
 }

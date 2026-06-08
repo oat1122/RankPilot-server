@@ -7,9 +7,9 @@ function st(over: Partial<PageAuditStateType>): PageAuditStateType {
 }
 
 describe('nextAfterCritique (critique loop guard)', () => {
-  it('pass=true → prioritize', () => {
+  it('pass=true → queryFanout (ออกจาก loop)', () => {
     const s = st({ critique: { pass: true, problems: [] }, draftAttempts: 1 });
-    expect(nextAfterCritique(s, 2)).toBe('prioritize');
+    expect(nextAfterCritique(s, 2)).toBe('queryFanout');
   });
 
   it('pass=false & attempts < max → draftMeta (loop)', () => {
@@ -20,12 +20,12 @@ describe('nextAfterCritique (critique loop guard)', () => {
     expect(nextAfterCritique(s, 2)).toBe('draftMeta');
   });
 
-  it('attempts >= max → prioritize (กัน infinite loop)', () => {
+  it('attempts >= max → queryFanout (กัน infinite loop)', () => {
     const s = st({
       critique: { pass: false, problems: ['x'] },
       draftAttempts: 2,
     });
-    expect(nextAfterCritique(s, 2)).toBe('prioritize');
+    expect(nextAfterCritique(s, 2)).toBe('queryFanout');
   });
 
   it('ยังไม่มี critique → draftMeta', () => {

@@ -3,8 +3,8 @@ import type { PageAuditStateType } from './state';
 /**
  * map final state → rows ของ ai_recommendations (schema ai_recommendations / เอกสาร 02 §0).
  * pure → unit test ได้. Phase 1 = diagnosis/title_draft/meta_draft/priority; Phase 2 ⊕
- * intent/content_gap (จาก fan-out). ทุกชนิดอยู่ใน enum aiRecommendations.type แล้ว.
- * status default 'suggested' (เป็นข้อเสนอจนกว่า user apply — เอกสาร 02 §8).
+ * intent/content_gap (จาก fan-out); Phase 3 ⊕ query_fanout (FAQ/schema). ทุกชนิดอยู่ใน
+ * enum aiRecommendations.type แล้ว. status default 'suggested' (ข้อเสนอจนกว่า user apply — §8).
  */
 
 export type RecommendationType =
@@ -13,6 +13,7 @@ export type RecommendationType =
   | 'content_gap'
   | 'title_draft'
   | 'meta_draft'
+  | 'query_fanout'
   | 'priority';
 
 export interface NewRecommendation {
@@ -56,6 +57,11 @@ export function toRecommendationRows(
       },
     });
   }
+
+  // Phase 3 (queryFanout): sub-question ของ AI search + schema ที่ควรใส่ (output = ทั้งก้อน fanout).
+  // เก็บเป็น rec ให้ Dashboard อ่าน; ลำดับหลัง meta_draft ก่อน priority (ตาม flow ของกราฟ).
+  if (s.fanout)
+    rows.push({ pageId: s.pageId, type: 'query_fanout', output: s.fanout });
 
   rows.push({
     pageId: s.pageId,

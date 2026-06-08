@@ -1,5 +1,5 @@
 import type { BaseMessage } from '@langchain/core/messages';
-import { critique, diagnose, draft, gap, intent } from './prompts';
+import { critique, diagnose, draft, fanout, gap, intent } from './prompts';
 import type { Critique, Diagnosis, MetaDraft, PageContext } from './state';
 
 /** builders สร้าง message ด้วย content แบบ string เสมอ → cast เพื่อ assert ข้อความ. */
@@ -93,5 +93,13 @@ describe('prompts', () => {
 
   it('gap: human payload มี competitors ใน context', () => {
     expect(text(gap(ctx, diag)[1])).toContain('nike.com');
+  });
+
+  it('fanout: system = AI-search rules, human payload มี context + diagnosis (Phase 3)', () => {
+    const msgs = fanout(ctx, diag);
+    expect(msgs).toHaveLength(2);
+    expect(text(msgs[0])).toContain('subQuestions');
+    expect(text(msgs[0])).toContain('FAQPage');
+    expect(text(msgs[1])).toContain('running shoes');
   });
 });

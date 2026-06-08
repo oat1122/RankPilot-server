@@ -111,6 +111,36 @@ export const envSchema = z.object({
   OPENROUTER_APP_TITLE: z.string().min(1).default('RankPilot'),
   // เพดานเวลาต่อ LLM call (ms) — กันโหนดค้างเมื่อ provider ช้า/ค้าง.
   OPENROUTER_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+  // HITL (เอกสาร 02 Phase 4): true → graph interrupt ที่ awaitReview ก่อน persist (รอ user
+  // อนุมัติใน dashboard แล้ว resume); false → prioritize→persist ตรง (dev/test ไม่ค้างรอ review).
+  // stringbool กันเคส 'false' ถูกตีเป็น true. default เปิด HITL ตามดีไซน์ Phase 4.
+  AI_HITL_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Voyage embeddings (เอกสาร 00 / 02 Phase 6) — voyage-3.5 (1024-dim) สำหรับ VECTOR cannibalization.
+  // key optional แบบเดียวกับ OPENROUTER/AHREFS: ไม่ใส่ก็ boot ได้ + AI audit ยังรันได้ (ข้าม embedding,
+  // similarity=null เหมือน Phase 2) — EmbeddingService gate ด้วย key. ยิงจาก worker (loadPageContext).
+  VOYAGE_API_KEY: z.string().min(1).optional(),
+  VOYAGE_BASE_URL: z.string().url().default('https://api.voyageai.com/v1'),
+  VOYAGE_MODEL: z.string().min(1).default('voyage-3.5'),
+  VOYAGE_DIM: z.coerce.number().int().positive().default(1024),
+  VOYAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+
+  // LangSmith tracing (เอกสาร 02 §6 Phase 6) — LangChain อ่าน LANGCHAIN_* จาก process.env เอง
+  // (auto-trace เมื่อ TRACING_V2=true + มี API key). ใส่ใน schema เพื่อ validate/document + present
+  // ใน process.env. ทั้งหมด optional → ไม่ตั้งก็ boot ได้ (tracing ปิด). stringbool กันเคส 'false'.
+  LANGCHAIN_TRACING_V2: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  LANGCHAIN_API_KEY: z.string().min(1).optional(),
+  LANGCHAIN_PROJECT: z.string().min(1).default('rankpilot'),
+  LANGCHAIN_ENDPOINT: z
+    .string()
+    .url()
+    .default('https://api.smith.langchain.com'),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -21,8 +21,20 @@ import {
   index,
   uniqueIndex,
   decimal,
+  customType,
+  primaryKey,
 } from 'drizzle-orm/mysql-core';
 import { vector } from './types/vector';
+
+/**
+ * LONGBLOB — Drizzle ไม่มี blob type สำหรับ mysql core → custom type. mysql2 คืนค่าเป็น Buffer
+ * (เป็น Uint8Array subclass). ใช้เก็บ checkpoint/serialized writes ของ LangGraph (เอกสาร 02 Phase 4).
+ */
+const longblob = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return 'longblob';
+  },
+});
 
 const pk = () =>
   bigint('id', { mode: 'number', unsigned: true }).autoincrement().primaryKey();
@@ -393,11 +405,55 @@ export const aiRuns = mysqlTable('ai_runs', {
   status: mysqlEnum('status', ['running', 'done', 'failed', 'awaiting_review'])
     .notNull()
     .default('running'),
+  // Phase 4 (HITL): proposal ที่ค้างรอ user อนุมัติ (= toRecommendationRows ตอน interrupt) →
+  // dashboard อ่านโชว์ก่อน approve/reject; เคลียร์เป็น null เมื่อ persist/reject เสร็จ (เอกสาร 02 §8).
+  reviewPayload: json('review_payload'),
   inputTokens: int('input_tokens'),
   outputTokens: int('output_tokens'),
   startedAt: timestamp('started_at').notNull().defaultNow(),
   finishedAt: timestamp('finished_at'),
 });
+
+/* ---------- AI config: model selection ต่อโปรเจค (เอกสาร 02 §3 / Phase 5) ---------- */
+// projectId null = global default (ใช้ทุกโปรเจคที่ไม่ตั้งเอง). models = { reasoner:{modelId,
+// temperature,maxTokens}, worker, cheap } (role→cfg). provider = openrouter routing prefs.
+export const aiSettings = mysqlTable(
+  'ai_settings',
+  {
+    id: pk(),
+    projectId: fk('project_id'), // null = global default
+    models: json('models').notNull(),
+    provider: json('provider'), // { require_parameters, sort }
+    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    uqProject: uniqueIndex('uq_ai_settings_project').on(t.projectId),
+  }),
+);
+
+/* ---------- AI skills: ฉีดความรู้รายโหนด เปิด/ปิดได้ (เอกสาร 02 §4 / Phase 5) ---------- */
+// projectId null = global library. body = markdown ที่ AI อ่านก่อนตอบ. appliesTo = ['diagnose',
+// 'draft'] หรือ ['*'] (ทุกโหนด). resolve: enabled + (project นี้/global) + node ∈ appliesTo, เรียง priority desc.
+export const aiSkills = mysqlTable(
+  'ai_skills',
+  {
+    id: pk(),
+    projectId: fk('project_id'), // null = global library
+    slug: varchar('slug', { length: 96 }).notNull(),
+    name: varchar('name', { length: 160 }).notNull(),
+    description: varchar('description', { length: 512 }).notNull(),
+    body: text('body').notNull(),
+    appliesTo: json('applies_to').notNull(), // string[] (node names หรือ ['*'])
+    enabled: boolean('enabled').notNull().default(true),
+    priority: smallint('priority').notNull().default(0), // มากก่อน (บนสุดของ prefix)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    uqSlug: uniqueIndex('uq_ai_skill_slug').on(t.projectId, t.slug),
+    byEnabled: index('ix_ai_skill_enabled').on(t.projectId, t.enabled),
+  }),
+);
 
 export const aiRecommendations = mysqlTable(
   'ai_recommendations',
@@ -422,6 +478,54 @@ export const aiRecommendations = mysqlTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({ byPage: index('ix_rec_page').on(t.pageId, t.status) }),
+);
+
+/* ---------- AI checkpointer (LangGraph HITL — เอกสาร 02 Phase 4) ---------- */
+// persistent checkpointer แทน MemorySaver → resume graph ข้าม process/หลัง restart ได้
+// (จำเป็นต่อ awaitReview interrupt: รัน job เก็บ checkpoint, resume job คนละ process อ่านต่อ).
+// schema มิเรอร์ official saver (checkpoints + checkpoint_writes); blob = serde ของ LangGraph.
+export const aiCheckpoints = mysqlTable(
+  'ai_checkpoints',
+  {
+    threadId: varchar('thread_id', { length: 255 }).notNull(), // = page:<id>:run:<runId>
+    checkpointNs: varchar('checkpoint_ns', { length: 255 })
+      .notNull()
+      .default(''),
+    checkpointId: varchar('checkpoint_id', { length: 64 }).notNull(), // uuid6 (time-ordered)
+    parentCheckpointId: varchar('parent_checkpoint_id', { length: 64 }),
+    checkpoint: longblob('checkpoint').notNull(), // serde.dumpsTyped(checkpoint)
+    metadata: longblob('metadata').notNull(), // serde.dumpsTyped(metadata)
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    // ตั้งชื่อ PK เอง — auto-name ของ Drizzle ยาวเกิน 64 ตัว (ER_TOO_LONG_IDENT ของ MariaDB)
+    pk: primaryKey({
+      name: 'pk_ai_checkpoints',
+      columns: [t.threadId, t.checkpointNs, t.checkpointId],
+    }),
+  }),
+);
+
+export const aiCheckpointWrites = mysqlTable(
+  'ai_checkpoint_writes',
+  {
+    threadId: varchar('thread_id', { length: 255 }).notNull(),
+    checkpointNs: varchar('checkpoint_ns', { length: 255 })
+      .notNull()
+      .default(''),
+    checkpointId: varchar('checkpoint_id', { length: 64 }).notNull(),
+    taskId: varchar('task_id', { length: 64 }).notNull(),
+    idx: int('idx').notNull(), // WRITES_IDX_MAP[channel] ?? ลำดับใน writes
+    channel: varchar('channel', { length: 255 }).notNull(),
+    blob: longblob('blob').notNull(), // serde.dumpsTyped(value)
+  },
+  (t) => ({
+    // ตั้งชื่อ PK เอง — auto-name (table+5 cols) ยาว 71 ตัว > 64 (ER_TOO_LONG_IDENT ของ MariaDB)
+    pk: primaryKey({
+      name: 'pk_ai_ckpt_writes',
+      columns: [t.threadId, t.checkpointNs, t.checkpointId, t.taskId, t.idx],
+    }),
+  }),
 );
 
 /* ---------- alerts ---------- */

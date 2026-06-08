@@ -5,6 +5,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -12,13 +13,25 @@ import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
 import {
   CreateAiAuditDto,
   ListRecommendationsQueryDto,
+  ListRunsQueryDto,
+  ReviewRunDto,
 } from './dto/create-ai-audit.dto';
 import {
   AiEnqueuedDto,
   AiRecommendationsDto,
+  AiReviewQueuedDto,
+  AiRunsDto,
   AiStatusDto,
 } from './dto/ai-response.dto';
+import {
+  AiSettingsViewDto,
+  CreateSkillDto,
+  PutAiSettingsDto,
+  SkillCreatedDto,
+  SkillsListDto,
+} from './dto/ai-config.dto';
 import { AiService } from './ai.service';
+import { AiConfigService } from './ai-config.service';
 
 /**
  * /projects/:projectId/ai — stage [4] AI Advisor (เอกสาร 02).
@@ -30,7 +43,10 @@ import { AiService } from './ai.service';
 @ApiStandardErrorResponses()
 @Controller('projects/:projectId/ai')
 export class AiController {
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly config: AiConfigService,
+  ) {}
 
   @Post('audit')
   @ApiEnvelopeResponse(AiEnqueuedDto, {
@@ -57,11 +73,83 @@ export class AiController {
     return this.ai.recommendations(projectId, query);
   }
 
+  @Get('runs')
+  @ApiEnvelopeResponse(AiRunsDto, {
+    description:
+      'ai_runs ของ project (กรอง ?status=awaiting_review) + proposal ที่รอรีวิว — Dashboard HITL (เอกสาร 02 Phase 4)',
+  })
+  runs(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Query() query: ListRunsQueryDto,
+  ) {
+    return this.ai.listRuns(projectId, query);
+  }
+
+  @Post('runs/:runId/review')
+  @ApiEnvelopeResponse(AiReviewQueuedDto, {
+    status: 201,
+    description:
+      'อนุมัติ/ปฏิเสธ draft → enqueue resume graph (HITL — เอกสาร 02 Phase 4). run ต้องอยู่ awaiting_review',
+  })
+  review(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('runId', ParseIntPipe) runId: number,
+    @Body() dto: ReviewRunDto,
+  ) {
+    return this.ai.review(projectId, runId, dto);
+  }
+
   @Get('jobs/:jobId')
   @ApiEnvelopeResponse(AiStatusDto, {
     description: 'สถานะ job + สรุปผล audit เมื่อ state=completed',
   })
   status(@Param('jobId') jobId: string) {
     return this.ai.status(jobId);
+  }
+
+  // ---------- config: model selection ต่อโปรเจค (Phase 5, เอกสาร 02 §3) ----------
+
+  @Get('settings')
+  @ApiEnvelopeResponse(AiSettingsViewDto, {
+    description:
+      'ai_settings ของ project (null = default) + map role→modelId ที่ใช้จริง',
+  })
+  settings(@Param('projectId', ParseIntPipe) projectId: number) {
+    return this.config.getSettings(projectId);
+  }
+
+  @Put('settings')
+  @ApiEnvelopeResponse(AiSettingsViewDto, {
+    description:
+      'ตั้ง model ต่อ role ของ project (validate ด้วย AiSettingsSchema) แล้ว upsert',
+  })
+  putSettings(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: PutAiSettingsDto,
+  ) {
+    return this.config.putSettings(projectId, dto);
+  }
+
+  // ---------- config: skills (Phase 5, เอกสาร 02 §4) ----------
+
+  @Get('skills')
+  @ApiEnvelopeResponse(SkillsListDto, {
+    description:
+      'skill ที่ project เห็น (global + ของ project) พร้อมสถานะ enabled',
+  })
+  listSkills(@Param('projectId', ParseIntPipe) projectId: number) {
+    return this.config.listSkills(projectId);
+  }
+
+  @Post('skills')
+  @ApiEnvelopeResponse(SkillCreatedDto, {
+    status: 201,
+    description: 'สร้าง skill (markdown body + appliesTo) ของ project',
+  })
+  createSkill(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: CreateSkillDto,
+  ) {
+    return this.config.createSkill(projectId, dto);
   }
 }

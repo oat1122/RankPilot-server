@@ -36,6 +36,10 @@ export const ErrorCode = {
   AI_JOB_NOT_FOUND: 'AI_JOB_NOT_FOUND', // jobId ที่ขอสถานะไม่มีใน queue 'ai'
   AI_NO_CRAWL: 'AI_NO_CRAWL', // ไม่มี crawl/page ให้ audit (ต้อง crawl ก่อน)
   AI_NOT_CONFIGURED: 'AI_NOT_CONFIGURED', // OPENROUTER_API_KEY ไม่ได้ตั้งค่า (เอกสาร 02 §9)
+  AI_RUN_NOT_FOUND: 'AI_RUN_NOT_FOUND', // runId ที่ขอ review ไม่มี/ไม่ใช่โปรเจคนี้ (Phase 4 HITL)
+  AI_RUN_NOT_REVIEWABLE: 'AI_RUN_NOT_REVIEWABLE', // run ไม่ได้อยู่สถานะ awaiting_review (Phase 4)
+  AI_SKILL_NOT_FOUND: 'AI_SKILL_NOT_FOUND', // skillId ที่ขอแก้/toggle ไม่มี (Phase 5)
+  EMBEDDING_NOT_CONFIGURED: 'EMBEDDING_NOT_CONFIGURED', // VOYAGE_API_KEY ไม่ได้ตั้งค่า (Phase 6)
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -64,6 +68,10 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   AI_JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
   AI_NO_CRAWL: HttpStatus.UNPROCESSABLE_ENTITY,
   AI_NOT_CONFIGURED: HttpStatus.SERVICE_UNAVAILABLE,
+  AI_RUN_NOT_FOUND: HttpStatus.NOT_FOUND,
+  AI_RUN_NOT_REVIEWABLE: HttpStatus.CONFLICT,
+  AI_SKILL_NOT_FOUND: HttpStatus.NOT_FOUND,
+  EMBEDDING_NOT_CONFIGURED: HttpStatus.SERVICE_UNAVAILABLE,
 };
 
 /** ข้อความ default ต่อ code (override ได้ตอน throw). */
@@ -91,6 +99,11 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   AI_NO_CRAWL: 'No crawl available to audit — run a crawl first',
   AI_NOT_CONFIGURED:
     'AI advisor not configured — OPENROUTER_API_KEY is missing',
+  AI_RUN_NOT_FOUND: 'AI run not found',
+  AI_RUN_NOT_REVIEWABLE: 'AI run is not awaiting review',
+  AI_SKILL_NOT_FOUND: 'AI skill not found',
+  EMBEDDING_NOT_CONFIGURED:
+    'Embeddings not configured — VOYAGE_API_KEY is missing',
 };
 
 /** lookup: HTTP status → ErrorCode (เฉพาะที่ map ตรง ๆ ได้). */

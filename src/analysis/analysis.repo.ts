@@ -62,6 +62,71 @@ export interface ScoreUpsert {
   breakdown: unknown;
 }
 
+/** 1 แถว ranking ดิบ (page_keywords ⨝ keywords) ที่ป้อนเข้า aggregatePageSignals. */
+export interface RankingRow {
+  pageId: number;
+  keyword: string;
+  position: number | null;
+  traffic: number | null;
+  capturedAt: number; // epoch ms (0 = ไม่ทราบ)
+}
+
+/**
+ * หน้าต่าง "ranking สด" ต่อหน้า: นับเฉพาะ page_keywords ที่ capture ภายใน N วันนับจาก capture
+ * ล่าสุดของหน้านั้น. ∵ page_keywords เป็น append-only ไม่มี cleanup (เอกสาร 01 §2 — uq ไม่มี)
+ * → keyword ที่ "หลุดอันดับ" ในรอบ enrich ถัด ๆ ไม่มี row ถอนออก จะค้างตลอดแล้วทำให้ Σ traffic
+ * (pageTraffic) พองเกินจริง → impactScore เพี้ยน. หน้าต่างกว้างพอให้งาน enrich หลายโหมด
+ * (domain + per-page exact) ในรอบเดียวกันสะสม coverage รวมกันได้ แต่ตัดของรอบเก่าทิ้ง.
+ */
+export const RANKING_RECENCY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * รวมสัญญาณ ranking ต่อหน้า (pure, ไม่มี I/O → unit test ได้): primary keyword (position
+ * ดีสุด) + Σ traffic. ตัดแถวที่เก่ากว่าหน้าต่าง recency ของหน้านั้นทิ้งก่อน (กัน keyword churn
+ * สะสม) แล้ว dedup เอา capture ล่าสุดต่อ (page|keyword).
+ */
+export function aggregatePageSignals(
+  rows: RankingRow[],
+  windowMs: number = RANKING_RECENCY_WINDOW_MS,
+): Map<number, PageSignals> {
+  const out = new Map<number, PageSignals>();
+  if (rows.length === 0) return out;
+
+  // 1) capture ล่าสุดต่อหน้า → ใช้กำหนดขอบ recency window ของหน้านั้น
+  const maxByPage = new Map<number, number>();
+  for (const r of rows) {
+    const prev = maxByPage.get(r.pageId);
+    if (prev == null || r.capturedAt > prev)
+      maxByPage.set(r.pageId, r.capturedAt);
+  }
+
+  // 2) dedup เอาแถวล่าสุดต่อ (page|keyword) — เฉพาะที่อยู่ในหน้าต่าง (ตัด churn รอบเก่า)
+  const latest = new Map<string, RankingRow>();
+  for (const r of rows) {
+    const cutoff = (maxByPage.get(r.pageId) ?? 0) - windowMs;
+    if (r.capturedAt < cutoff) continue;
+    const key = `${r.pageId}|${r.keyword}`;
+    const prev = latest.get(key);
+    if (!prev || r.capturedAt >= prev.capturedAt) latest.set(key, r);
+  }
+
+  // 3) aggregate ต่อหน้า: primary = position น้อยสุด, pageTraffic = Σ traffic
+  const best = new Map<number, { keyword: string; position: number }>();
+  for (const v of latest.values()) {
+    const sig = out.get(v.pageId) ?? { primaryKeyword: null, pageTraffic: 0 };
+    sig.pageTraffic += v.traffic ?? 0;
+    out.set(v.pageId, sig);
+
+    if (v.position != null) {
+      const b = best.get(v.pageId);
+      if (!b || v.position < b.position)
+        best.set(v.pageId, { keyword: v.keyword, position: v.position });
+    }
+  }
+  for (const [pageId, b] of best) out.get(pageId)!.primaryKeyword = b.keyword;
+  return out;
+}
+
 /**
  * AnalysisRepo — รวม Drizzle query ของ stage [3] Analysis (อ่าน crawl/enrich + เขียน
  * seo_scores/audit_findings). service ชั้นบน (AnalysisRunner / AnalysisService) ไม่ต้องรู้ SQL.
@@ -133,14 +198,13 @@ export class AnalysisRepo {
 
   /**
    * สัญญาณ ranking ต่อหน้า (primary keyword + traffic รวม) สำหรับ pageIds ที่ให้มา.
-   * page_keywords เป็น time-series (ไม่ผูก crawl เสมอ) → dedupe เอา capture ล่าสุดต่อ
-   * (pageId, keyword) ก่อน แล้วค่อยหา min(position) เป็น primary + Σ(traffic).
+   * page_keywords เป็น append-only time-series (ไม่ผูก crawl เสมอ) → ตรรกะรวม/กรอง churn
+   * อยู่ใน aggregatePageSignals (pure, มี recency window — ดู RANKING_RECENCY_WINDOW_MS).
    */
   async pageSignalsForCrawl(
     pageIds: number[],
   ): Promise<Map<number, PageSignals>> {
-    const out = new Map<number, PageSignals>();
-    if (pageIds.length === 0) return out;
+    if (pageIds.length === 0) return new Map<number, PageSignals>();
 
     const rows = await this.db
       .select({
@@ -154,46 +218,15 @@ export class AnalysisRepo {
       .innerJoin(keywords, eq(pageKeywords.keywordId, keywords.id))
       .where(inArray(pageKeywords.pageId, pageIds));
 
-    // dedupe time-series: เก็บแถวล่าสุด (capturedAt มากสุด) ต่อ (pageId|keyword)
-    interface KwRow {
-      pageId: number;
-      keyword: string;
-      position: number | null;
-      traffic: number;
-      capturedAt: number;
-    }
-    const latest = new Map<string, KwRow>();
-    for (const r of rows) {
-      const key = `${r.pageId}|${r.keyword}`;
-      const prev = latest.get(key);
-      const cur: KwRow = {
+    return aggregatePageSignals(
+      rows.map((r) => ({
         pageId: r.pageId,
         keyword: r.keyword,
         position: r.position,
         traffic: r.traffic ?? 0,
         capturedAt: r.capturedAt?.getTime() ?? 0,
-      };
-      if (!prev || cur.capturedAt >= prev.capturedAt) latest.set(key, cur);
-    }
-
-    // aggregate ต่อ page: primary = keyword ที่ position ดีสุด (น้อยสุด), traffic = Σ
-    const best = new Map<number, { keyword: string; position: number }>();
-    for (const v of latest.values()) {
-      const sig = out.get(v.pageId) ?? { primaryKeyword: null, pageTraffic: 0 };
-      sig.pageTraffic += v.traffic;
-      out.set(v.pageId, sig);
-
-      if (v.position != null) {
-        const b = best.get(v.pageId);
-        if (!b || v.position < b.position)
-          best.set(v.pageId, { keyword: v.keyword, position: v.position });
-      }
-    }
-    for (const [pageId, b] of best) {
-      const sig = out.get(pageId)!;
-      sig.primaryKeyword = b.keyword;
-    }
-    return out;
+      })),
+    );
   }
 
   /** จำนวนลิงก์ภายในที่ชี้ "เข้า" แต่ละหน้าใน crawl นี้ (group by toPageId). */

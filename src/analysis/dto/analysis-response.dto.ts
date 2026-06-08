@@ -19,6 +19,7 @@ export const analysisSummarySchema = z.object({
   projectId: z.number(),
   crawlId: z.number(),
   pagesAnalyzed: z.number(),
+  pagesWithRanking: z.number(), // หน้าที่มี ranking signal สดจาก flow [2] (0 = handoff ขาด)
   scoresUpserted: z.number(),
   findingsCreated: z.number(),
   byType: z.record(z.string(), z.number()),

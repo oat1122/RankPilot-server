@@ -93,6 +93,33 @@ describe('AnalysisRunner', () => {
     expect(repo.insertFindings).not.toHaveBeenCalled();
   });
 
+  it('รายงาน pagesWithRanking = จำนวนหน้าที่มี ranking signal (handoff [2]→[3])', async () => {
+    const signals = new Map<number, PageSignals>([
+      [1, { primaryKeyword: 'best running shoes', pageTraffic: 100 }],
+    ]);
+    const repo = mockRepo({
+      snapshotsForCrawl: jest.fn().mockResolvedValue([snap({ pageId: 1 })]),
+      pageSignalsForCrawl: jest.fn().mockResolvedValue(signals),
+    });
+    const out = await makeRunner(repo).analyzeCrawl({
+      projectId: 5,
+      crawlId: 1,
+    });
+    expect(out.pagesWithRanking).toBe(1);
+  });
+
+  it('pagesWithRanking = 0 เมื่อไม่มี ranking signal (Ahrefs ยังไม่รัน/ไม่ match)', async () => {
+    const repo = mockRepo({
+      snapshotsForCrawl: jest.fn().mockResolvedValue([snap({ pageId: 1 })]),
+      // pageSignalsForCrawl default → Map ว่าง
+    });
+    const out = await makeRunner(repo).analyzeCrawl({
+      projectId: 5,
+      crawlId: 1,
+    });
+    expect(out.pagesWithRanking).toBe(0);
+  });
+
   it('ไม่สร้าง orphan เมื่อ crawl มีหน้าเดียว (single-URL → multiPage=false)', async () => {
     const only = snap({ snapshotId: 10, pageId: 1 });
     const repo = mockRepo({

@@ -45,6 +45,12 @@ export interface AnalysisSummary {
   projectId: number;
   crawlId: number;
   pagesAnalyzed: number;
+  /**
+   * จำนวนหน้าที่มี ranking signal สด (จาก flow [2] Ahrefs ผ่าน page_keywords). 0 ทั้งที่
+   * pagesAnalyzed>0 = handoff [2]→[3] ขาด — Ahrefs ยังไม่รัน หรือ url_hash ไม่ match
+   * (ดู crawler.repo key หน้าด้วย finalUrl). เปิดให้สังเกตได้แทนล้มเหลวเงียบ ๆ.
+   */
+  pagesWithRanking: number;
   scoresUpserted: number;
   findingsCreated: number;
   byType: Record<string, number>;
@@ -83,6 +89,16 @@ export class AnalysisRunner {
       snapshots.map((s) => s.pageId),
     );
     const inbound = await this.repo.inboundInternalCountByPage(crawlId);
+
+    // handoff [2]→[3]: signals.size = หน้าที่มี ranking สด. 0 = Ahrefs ยังไม่รัน/ไม่ match
+    // → เตือน (ไม่ throw — analysis on-page ทำงานได้แม้ไม่มี ranking) แทนล้มเหลวเงียบ ๆ.
+    const pagesWithRanking = signals.size;
+    if (pagesWithRanking === 0)
+      this.logger.warn(
+        `analyze#${job.projectId} crawl=${crawlId}: ไม่มี ranking signal เลย ` +
+          `(page_keywords ว่าง) — flow [2] Ahrefs ยังไม่รัน หรือ url_hash ไม่ match. ` +
+          `keywordCoverage จะเป็น null + impact ไม่ถ่วง traffic ทุกหน้า.`,
+      );
 
     const findings: FindingInsert[] = [];
     let scoresUpserted = 0;
@@ -126,12 +142,14 @@ export class AnalysisRunner {
       projectId: job.projectId,
       crawlId,
       pagesAnalyzed: snapshots.length,
+      pagesWithRanking,
       scoresUpserted,
       findingsCreated: findings.length,
       byType,
     };
     this.logger.log(
-      `analyze#${job.projectId} crawl=${crawlId} pages=${snapshots.length} scores=${scoresUpserted} findings=${findings.length}`,
+      `analyze#${job.projectId} crawl=${crawlId} pages=${snapshots.length} ` +
+        `ranking=${pagesWithRanking} scores=${scoresUpserted} findings=${findings.length}`,
     );
     return summary;
   }

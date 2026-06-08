@@ -61,7 +61,12 @@ export class CrawlerRepo {
       const pageId = await this.upsertPageTx(
         tx,
         input.projectId,
-        input.result.url,
+        // key หน้าด้วย finalUrl (หลัง follow redirect) ไม่ใช่ url ที่ขอ — flow [2] Ahrefs join
+        // ranking ด้วย best_position_url (= canonical/URL หลัง redirect ที่ Google index) ผ่าน
+        // url_hash เดียวกัน. ถ้า key ด้วย url เดิม (ก่อน redirect) hash สองฝั่งไม่ตรง →
+        // page_keywords ไม่ผูกเข้าหน้า → stage [3] Analysis ไม่มี ranking signal (keywordCoverage
+        // เป็น null + impact ไม่ถ่วง traffic ทุกหน้า). เอกสาร 03 §6 / common/url.ts header.
+        input.result.finalUrl,
       );
       const snapshotId = await this.insertSnapshotTx(tx, {
         crawlId: input.crawlId,
@@ -106,7 +111,11 @@ export class CrawlerRepo {
 
   /* ---------- transactional writes (private — รับ executor ของ tx) ---------- */
 
-  /** upsert page (uq project+url_hash) คืน pageId — url_hash คิดแบบเดียวกับ enrichment join. */
+  /**
+   * upsert page (uq project+url_hash) คืน pageId — url_hash คิดแบบเดียวกับ enrichment join
+   * (sha1 ของ normalizeUrl). caller ส่ง result.finalUrl (หลัง redirect) เพื่อให้ hash ตรงกับ
+   * best_position_url ที่ Ahrefs คืน; normalizeUrl idempotent → normalize ซ้ำตรงนี้ปลอดภัย.
+   */
   private async upsertPageTx(
     tx: Tx,
     projectId: number,

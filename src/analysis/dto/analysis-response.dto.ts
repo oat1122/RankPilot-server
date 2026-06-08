@@ -73,3 +73,16 @@ export const analysisScoresSchema = z.object({
   items: z.array(analysisScoreSchema),
 });
 export class AnalysisScoresDto extends createZodDto(analysisScoresSchema) {}
+
+/**
+ * GET summary — aggregate ระดับโปรเจค ของ crawl ที่เลือก/ล่าสุด (gap #4 — แทน FE derive เอง).
+ * avg = null เมื่อไม่มีคะแนน; pagesScored = จำนวนหน้าที่มี seo_scores.
+ */
+export const analysisScoreSummarySchema = z.object({
+  avgHealthScore: z.number().nullable(),
+  avgKeywordCoverage: z.number().nullable(),
+  pagesScored: z.number(),
+});
+export class AnalysisScoreSummaryDto extends createZodDto(
+  analysisScoreSummarySchema,
+) {}

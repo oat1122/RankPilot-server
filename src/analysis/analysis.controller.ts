@@ -20,6 +20,7 @@ import {
   AnalysisEnqueuedDto,
   AnalysisFindingsDto,
   AnalysisScoresDto,
+  AnalysisScoreSummaryDto,
   AnalysisStatusDto,
 } from './dto/analysis-response.dto';
 import { AnalysisService } from './analysis.service';
@@ -72,6 +73,18 @@ export class AnalysisController {
     @Query() query: ListScoresQueryDto,
   ) {
     return this.analysis.scores(projectId, query);
+  }
+
+  @Get('summary')
+  @ApiEnvelopeResponse(AnalysisScoreSummaryDto, {
+    description:
+      'avg health/keyword + จำนวนหน้าที่มีคะแนน ของ crawl ที่เลือก/ล่าสุด (project-level aggregate, gap #4)',
+  })
+  summary(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Query() query: ListScoresQueryDto,
+  ) {
+    return this.analysis.summary(projectId, query);
   }
 
   @Get('jobs/:jobId')

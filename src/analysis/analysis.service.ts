@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 import { AnalysisRepo } from './analysis.repo';
+import { summarizeScores } from './score-summary';
 import type { AnalyzeCrawlJobData, AnalysisSummary } from './analysis.runner';
 import type {
   CreateAnalysisDto,
@@ -113,5 +114,11 @@ export class AnalysisService implements OnModuleInit {
   async scores(projectId: number, query: ListScoresQueryDto) {
     const items = await this.repo.listScores(projectId, query.crawlId);
     return { items };
+  }
+
+  /** aggregate คะแนนระดับโปรเจค (gap #4) — avg health/keyword + จำนวนหน้าที่มีคะแนน. */
+  async summary(projectId: number, query: ListScoresQueryDto) {
+    const items = await this.repo.listScores(projectId, query.crawlId);
+    return summarizeScores(items);
   }
 }

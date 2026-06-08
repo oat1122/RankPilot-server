@@ -26,11 +26,22 @@ function makeGuard(over: Overrides = {}) {
   };
   const config = { get: jest.fn((k: string) => over.config?.[k]) };
   const verifier = { verify: jest.fn() };
+  // resolveUser คืน role ตาม provisionAsAdmin (mock allowlist) — สะท้อนพฤติกรรมจริงของ repo.
   const repo = {
-    upsertUser: jest
+    resolveUser: jest
       .fn()
-      .mockImplementation((clerkUserId: string, email: string | null) =>
-        Promise.resolve({ id: 1, clerkUserId, email: email ?? 'fallback' }),
+      .mockImplementation(
+        (p: {
+          clerkUserId: string;
+          email: string | null;
+          provisionAsAdmin: boolean;
+        }) =>
+          Promise.resolve({
+            id: 1,
+            clerkUserId: p.clerkUserId,
+            email: p.email ?? 'fallback',
+            role: p.provisionAsAdmin ? 'admin' : 'user',
+          }),
       ),
   };
   const guard = new ClerkAuthGuard(
@@ -42,50 +53,46 @@ function makeGuard(over: Overrides = {}) {
   return { guard, reflector, config, verifier, repo };
 }
 
-// ClerkAuthGuard = secure-by-default (เอกสาร 05 §4): public ข้าม, dev-bypass ตอนไม่มี key,
-// verify จริงตอนมี key. ครอบทุกเส้นทาง decision เพื่อกัน regression ของ auth.
+// ClerkAuthGuard = secure-by-default (เอกสาร 05 §4): public ข้าม, dev-bypass(admin) ตอนไม่มี key,
+// verify จริง + allowlist resolve ตอนมี key. ครอบทุกเส้นทาง decision เพื่อกัน regression ของ auth.
 describe('ClerkAuthGuard', () => {
   it('@Public → ผ่านโดยไม่แตะ token/repo', async () => {
     const { guard, repo, verifier } = makeGuard({ isPublic: true });
     const { ctx } = makeCtx();
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
-    expect(repo.upsertUser).not.toHaveBeenCalled();
+    expect(repo.resolveUser).not.toHaveBeenCalled();
     expect(verifier.verify).not.toHaveBeenCalled();
   });
 
-  it('dev-bypass (ไม่มี CLERK_SECRET_KEY, ไม่ใช่ prod) → inject dev user', async () => {
+  it('dev-bypass (ไม่มี CLERK_SECRET_KEY, ไม่ใช่ prod) → inject dev admin', async () => {
     const { guard, repo } = makeGuard({ config: { NODE_ENV: 'test' } });
     const { ctx, req } = makeCtx();
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
-    expect(repo.upsertUser).toHaveBeenCalledWith(
-      'dev_user',
-      'dev@rankpilot.local',
-    );
+    expect(repo.resolveUser).toHaveBeenCalledWith({
+      clerkUserId: 'dev_user',
+      email: 'dev@rankpilot.local',
+      provisionAsAdmin: true,
+    });
     expect(req.user).toEqual({
       id: 1,
       clerkUserId: 'dev_user',
       email: 'dev@rankpilot.local',
+      role: 'admin',
     });
   });
 
-  it('cache → upsert ครั้งเดียวข้ามหลาย request', async () => {
-    const { guard, repo } = makeGuard({ config: { NODE_ENV: 'test' } });
-    await guard.canActivate(makeCtx().ctx);
-    await guard.canActivate(makeCtx().ctx);
-    expect(repo.upsertUser).toHaveBeenCalledTimes(1);
-  });
-
-  it('มี key แต่ไม่มี Bearer → 401 (ไม่เรียก verify)', async () => {
-    const { guard, verifier } = makeGuard({
+  it('มี key แต่ไม่มี Bearer → 401 (ไม่เรียก verify/resolve)', async () => {
+    const { guard, verifier, repo } = makeGuard({
       config: { CLERK_SECRET_KEY: 'sk' },
     });
     await expect(guard.canActivate(makeCtx().ctx)).rejects.toBeInstanceOf(
       AppException,
     );
     expect(verifier.verify).not.toHaveBeenCalled();
+    expect(repo.resolveUser).not.toHaveBeenCalled();
   });
 
-  it('มี key + Bearer valid → verify → upsert → req.user', async () => {
+  it('มี key + Bearer valid, email ปกติ → resolve เป็น user (provisionAsAdmin=false)', async () => {
     const { guard, verifier, repo } = makeGuard({
       config: { CLERK_SECRET_KEY: 'sk' },
     });
@@ -96,12 +103,27 @@ describe('ClerkAuthGuard', () => {
     const { ctx, req } = makeCtx({ authorization: 'Bearer tok123' });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(verifier.verify).toHaveBeenCalledWith('tok123');
-    expect(repo.upsertUser).toHaveBeenCalledWith('user_42', 'a@b.com');
-    expect(req.user).toEqual({
-      id: 1,
+    expect(repo.resolveUser).toHaveBeenCalledWith({
       clerkUserId: 'user_42',
       email: 'a@b.com',
+      provisionAsAdmin: false,
     });
+    expect(req.user).toMatchObject({ role: 'user', clerkUserId: 'user_42' });
+  });
+
+  it('มี key + email ∈ ADMIN_EMAILS (case-insensitive) → provisionAsAdmin=true', async () => {
+    const { guard, verifier, repo } = makeGuard({
+      config: { CLERK_SECRET_KEY: 'sk', ADMIN_EMAILS: 'boss@x.com, A@B.com' },
+    });
+    verifier.verify.mockResolvedValue({ clerkUserId: 'u1', email: 'a@b.com' });
+    const { ctx, req } = makeCtx({ authorization: 'Bearer tok' });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(repo.resolveUser).toHaveBeenCalledWith({
+      clerkUserId: 'u1',
+      email: 'a@b.com',
+      provisionAsAdmin: true,
+    });
+    expect(req.user).toMatchObject({ role: 'admin' });
   });
 
   it('prod ไม่มี key → ปฏิเสธ (กันพลาด ไม่ปล่อย bypass)', async () => {
@@ -109,6 +131,6 @@ describe('ClerkAuthGuard', () => {
     await expect(guard.canActivate(makeCtx().ctx)).rejects.toBeInstanceOf(
       AppException,
     );
-    expect(repo.upsertUser).not.toHaveBeenCalled();
+    expect(repo.resolveUser).not.toHaveBeenCalled();
   });
 });

@@ -43,6 +43,11 @@ export const ErrorCode = {
   AI_RUN_NOT_REVIEWABLE: 'AI_RUN_NOT_REVIEWABLE', // run ไม่ได้อยู่สถานะ awaiting_review (Phase 4)
   AI_SKILL_NOT_FOUND: 'AI_SKILL_NOT_FOUND', // skillId ที่ขอแก้/toggle ไม่มี (Phase 5)
   EMBEDDING_NOT_CONFIGURED: 'EMBEDDING_NOT_CONFIGURED', // VOYAGE_API_KEY ไม่ได้ตั้งค่า (Phase 6)
+  // UserManager (เอกสาร 05 §4) — ปิด self sign-up + RBAC admin/user ผ่าน /users
+  USER_NOT_FOUND: 'USER_NOT_FOUND', // userId ที่ admin ขอจัดการไม่มี
+  USER_NOT_PROVISIONED: 'USER_NOT_PROVISIONED', // login สำเร็จแต่ไม่อยู่ allowlist/ไม่ถูกเชิญ → ปฏิเสธ
+  USER_DISABLED: 'USER_DISABLED', // บัญชีถูก admin soft-disable (status=disabled)
+  USER_EMAIL_EXISTS: 'USER_EMAIL_EXISTS', // เชิญ/สร้าง user ด้วย email ที่มีอยู่แล้ว
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -76,6 +81,10 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   AI_RUN_NOT_REVIEWABLE: HttpStatus.CONFLICT,
   AI_SKILL_NOT_FOUND: HttpStatus.NOT_FOUND,
   EMBEDDING_NOT_CONFIGURED: HttpStatus.SERVICE_UNAVAILABLE,
+  USER_NOT_FOUND: HttpStatus.NOT_FOUND,
+  USER_NOT_PROVISIONED: HttpStatus.FORBIDDEN,
+  USER_DISABLED: HttpStatus.FORBIDDEN,
+  USER_EMAIL_EXISTS: HttpStatus.CONFLICT,
 };
 
 /** ข้อความ default ต่อ code (override ได้ตอน throw). */
@@ -109,6 +118,10 @@ export const ERROR_DEFAULT_MESSAGE: Record<ErrorCode, string> = {
   AI_SKILL_NOT_FOUND: 'AI skill not found',
   EMBEDDING_NOT_CONFIGURED:
     'Embeddings not configured — VOYAGE_API_KEY is missing',
+  USER_NOT_FOUND: 'User not found',
+  USER_NOT_PROVISIONED: 'User is not provisioned — contact an administrator',
+  USER_DISABLED: 'User account is disabled',
+  USER_EMAIL_EXISTS: 'A user with this email already exists',
 };
 
 /** lookup: HTTP status → ErrorCode (เฉพาะที่ map ตรง ๆ ได้). */

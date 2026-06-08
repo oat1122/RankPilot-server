@@ -10,6 +10,7 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { ClerkAuthGuard } from './auth/clerk-auth.guard';
 import { HealthModule } from './health/health.module';
+import { UsersModule } from './users/users.module';
 import { ProjectsModule } from './projects/projects.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { EnrichModule } from './enrich/enrich.module';
@@ -44,6 +45,8 @@ import { TrendsModule } from './trends/trends.module';
     // auth layer (Clerk Bearer) — providers ให้ ClerkAuthGuard ด้านล่าง (เอกสาร 05 §4)
     AuthModule,
     HealthModule,
+    // UserManager (@Roles admin) — list/เชิญ/เปลี่ยน role/soft-disable user; ไม่มี self sign-up (เอกสาร 05 §4)
+    UsersModule,
     // Projects (@Global) — list/detail/create + ProjectAccessGuard ที่ domain อื่น reuse (เอกสาร 01 §2)
     ProjectsModule,
     CrawlModule,

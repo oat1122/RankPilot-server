@@ -41,15 +41,25 @@ const pk = () =>
 const fk = (n: string) => bigint(n, { mode: 'number', unsigned: true });
 
 /* ---------- users / projects ---------- */
+// auth ผูก Clerk แต่ "ไม่มี self sign-up" (เอกสาร 05 §4) — admin คุม user ผ่าน /users (UserManager).
+// clerk_user_id nullable ∵ invite ที่ admin สร้างไว้ก่อน user login Clerk ครั้งแรกยังไม่มี clerk id
+// (bind ตอน login ครั้งแรกผ่าน email). role/status = RBAC ขั้นต้น (admin/user) + soft-disable.
 export const users = mysqlTable(
   'users',
   {
     id: pk(),
-    clerkUserId: varchar('clerk_user_id', { length: 64 }).notNull(),
+    clerkUserId: varchar('clerk_user_id', { length: 64 }), // null = pending invite (ยังไม่เคย login)
     email: varchar('email', { length: 320 }).notNull(),
+    role: mysqlEnum('role', ['admin', 'user']).notNull().default('user'),
+    status: mysqlEnum('status', ['active', 'disabled'])
+      .notNull()
+      .default('active'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
-  (t) => ({ byClerk: uniqueIndex('uq_users_clerk').on(t.clerkUserId) }),
+  (t) => ({
+    byClerk: uniqueIndex('uq_users_clerk').on(t.clerkUserId), // MariaDB ยอมหลาย NULL = หลาย invite ค้างได้
+    byEmail: uniqueIndex('uq_users_email').on(t.email), // match invite by email + กัน email ซ้ำ
+  }),
 );
 
 export const projects = mysqlTable(

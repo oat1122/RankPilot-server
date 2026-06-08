@@ -43,6 +43,13 @@
       "when": 1780898201856,
       "tag": "0005_certain_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1780919665144,
+      "tag": "0006_thick_may_parker",
+      "breakpoints": true
     }
   ]
 }

@@ -21,24 +21,25 @@ export class ClerkTokenVerifier {
 
   async verify(token: string): Promise<VerifiedClerkToken> {
     const secretKey = this.config.get<string>('CLERK_SECRET_KEY');
-    // verifyToken คืน { data } | { errors } (ไม่ throw) — แปลง error เป็น 401 ผ่าน envelope กลาง.
-    const result = await verifyToken(token, {
-      secretKey,
-      authorizedParties: this.authorizedParties(),
-    });
-    if (result.errors) {
-      // errors เป็น TokenVerificationError ที่ type resolve ไม่ได้ (error-typed) → cast อ่าน message
-      const reason =
-        (result.errors[0] as { message?: string } | undefined)?.message ??
-        'invalid token';
+    // @clerk/backend export `verifyToken` แบบ withLegacyReturn → คืน JwtPayload (claims) ตรง ๆ
+    // และ **throw** ทุกกรณีที่ verify ไม่ผ่าน (หมดอายุ/ลายเซ็น/azp/รูปแบบ JWT พัง) — ไม่ใช่
+    // { data, errors } ∴ ครอบ try/catch แปลงเป็น 401 (ไม่งั้นหลุดเป็น 500 ผ่าน AllExceptionsFilter).
+    let claims: Record<string, unknown>;
+    try {
+      claims = (await verifyToken(token, {
+        secretKey,
+        authorizedParties: this.authorizedParties(),
+      })) as Record<string, unknown>;
+    } catch (err) {
       throw new AppException(
         ErrorCode.UNAUTHORIZED,
-        `token ไม่ผ่านการตรวจสอบ (Clerk): ${reason}`,
+        `token ไม่ผ่านการตรวจสอบ (Clerk): ${
+          (err as { message?: string } | undefined)?.message ?? 'invalid token'
+        }`,
       );
     }
-    // claims อ่านแบบ defensive: sub = user id (มาตรฐาน), email = custom claim (มีเฉพาะถ้า
-    // ตั้ง JWT template). type ของ data หลวม (JwtPayload re-export) → cast เป็น record.
-    const claims = result.data as Record<string, unknown>;
+    // claims อ่านแบบ defensive: sub = user id (มาตรฐาน), email = custom claim (มีเฉพาะถ้าตั้ง
+    // "Customize session token" ให้ใส่ email). JwtPayload type หลวม → cast เป็น record แล้วเช็คเอง.
     const sub = typeof claims.sub === 'string' ? claims.sub : null;
     if (!sub)
       throw new AppException(

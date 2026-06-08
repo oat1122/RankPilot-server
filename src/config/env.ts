@@ -167,6 +167,13 @@ export const envSchema = z.object({
   // azp allowlist (comma-sep) — verifyToken ใช้ยืนยันว่า token ออกจาก frontend ที่อนุญาตเท่านั้น
   // (กัน token จากแอปอื่นใน Clerk instance เดียวกัน). ว่าง = ไม่ตรวจ azp.
   CLERK_AUTHORIZED_PARTIES: z.string().optional(),
+
+  // UserManager (เอกสาร 05 §4) — ปิด self sign-up: admin คุม user ผ่าน /users. ADMIN_EMAILS =
+  // allowlist (comma-sep) ของ email ที่ login แล้วได้ role admin อัตโนมัติ (bootstrap admin คนแรก
+  // ตอน DB ยังว่าง + env เป็น authority เหนือ DB กัน lockout). ว่าง = ไม่มี auto-admin (ต้อง seed เอง).
+  // *ต้องตั้ง Clerk JWT template ให้มี email claim* ถึง match ได้ (session token มาตรฐานไม่มี email).
+  // เก็บเป็น string แล้ว parse ในชั้น ClerkAuthGuard — แพทเทิร์นเดียวกับ CLERK_AUTHORIZED_PARTIES.
+  ADMIN_EMAILS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

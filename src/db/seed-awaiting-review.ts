@@ -130,7 +130,10 @@ async function main() {
       runId,
       pageId,
       type: 'diagnosis',
-      output: { summary: 'meta description ว่าง + 1 รูปขาด alt', severity: 'medium' },
+      output: {
+        summary: 'meta description ว่าง + 1 รูปขาด alt',
+        severity: 'medium',
+      },
       status: 'suggested',
     },
     {

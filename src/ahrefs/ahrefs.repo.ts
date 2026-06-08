@@ -52,7 +52,7 @@ export interface InsertContentGapInput {
   competitorDomains?: unknown;
 }
 
-/** snapshot DR/UR/refdomains (site-explorer metrics → backlink_snapshots — เอกสาร 03a §6). */
+/** snapshot DR/UR/refdomains (domain-rating + backlinks-stats → backlink_snapshots — เอกสาร 03a §6). */
 export interface InsertBacklinkSnapshotInput {
   projectId: number;
   pageId?: number | null;
@@ -159,25 +159,36 @@ export class AhrefsRepo {
       });
   }
 
-  /** upsert keyword (uq = project+keyword+country) แล้วคืน id; ไม่แตะ intent (AI ตั้งเอง). */
+  /**
+   * upsert keyword (uq = project+keyword+country) แล้วคืน id; ไม่แตะ intent (AI ตั้งเอง).
+   * แยก undefined ("flow นี้ไม่ได้ดึง field นี้ → อย่าทับ") ออกจาก null ("ดึงแล้วแต่ไม่มีค่า →
+   * ล้างเป็น null") ตอน update: organic-keywords ไม่คืน traffic_potential/parent_topic จึงไม่
+   * ควรลบค่าที่ keywords-explorer/overview เคย enrich ไว้. INSERT ใส่ null ให้ field ที่ไม่ส่ง.
+   */
   async upsertKeyword(input: UpsertKeywordInput): Promise<number> {
-    const metrics = {
-      searchVolume: input.searchVolume ?? null,
-      difficulty: input.difficulty ?? null,
-      cpc: input.cpc != null ? String(input.cpc) : null, // decimal → string (drizzle)
-      trafficPotential: input.trafficPotential ?? null,
-      parentTopic: input.parentTopic ?? null,
-      lastEnrichedAt: new Date(),
-    };
+    const cpc = input.cpc != null ? String(input.cpc) : null; // decimal → string (drizzle)
+    const set: Record<string, unknown> = { lastEnrichedAt: new Date() };
+    if (input.searchVolume !== undefined) set.searchVolume = input.searchVolume;
+    if (input.difficulty !== undefined) set.difficulty = input.difficulty;
+    if (input.cpc !== undefined) set.cpc = cpc;
+    if (input.trafficPotential !== undefined)
+      set.trafficPotential = input.trafficPotential;
+    if (input.parentTopic !== undefined) set.parentTopic = input.parentTopic;
+
     await this.db
       .insert(keywords)
       .values({
         projectId: input.projectId,
         keyword: input.keyword,
         country: input.country,
-        ...metrics,
+        searchVolume: input.searchVolume ?? null,
+        difficulty: input.difficulty ?? null,
+        cpc,
+        trafficPotential: input.trafficPotential ?? null,
+        parentTopic: input.parentTopic ?? null,
+        lastEnrichedAt: new Date(),
       })
-      .onDuplicateKeyUpdate({ set: metrics });
+      .onDuplicateKeyUpdate({ set });
 
     const rows = await this.db
       .select({ id: keywords.id })

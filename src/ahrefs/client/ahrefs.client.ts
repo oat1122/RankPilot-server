@@ -125,9 +125,13 @@ export class AhrefsClient {
   ): Promise<AxiosResponse> {
     const baseUrl = this.config.get<string>('AHREFS_API_BASE_URL')!;
     const url = `${baseUrl.replace(/\/+$/, '')}/${opts.endpoint.replace(/^\/+/, '')}`;
+    // ส่ง select เฉพาะเมื่อมี fields — endpoint แบบ fixed-object (domain-rating, backlinks-stats,
+    // metrics) ไม่รับ param `select`; ส่งไปจะโดน 400. fields:[] = "endpoint นี้ไม่ใช้ select".
+    const params: Record<string, unknown> = { ...opts.params };
+    if (opts.fields.length > 0) params.select = opts.fields.join(',');
     return firstValueFrom(
       this.http.get(url, {
-        params: { ...opts.params, select: opts.fields.join(',') },
+        params,
         headers: {
           Authorization: `Bearer ${apiKey}`,
           Accept: 'application/json',
@@ -147,22 +151,56 @@ export class AhrefsClient {
   ): Promise<void> {
     if (res.status >= 200 && res.status < 300) return;
     await this.refund(projectId, period, estimate);
+    // Ahrefs ใส่สาเหตุจริง (เช่น "Unknown column 'difficulty'") ไว้ใน body — ก่อนแก้โค้ดทิ้ง
+    // res.data ทั้งก้อน เหลือแต่ "HTTP 400" → debug ไม่ได้. แนบ reason เข้า message + details +
+    // log.error เพื่อให้ทั้ง log และ FE (job.failedReason = err.message) เห็นว่า field/param ไหนผิด.
+    const reason = this.describeAhrefsError(res.data);
+    const endpoint = res.config?.url ?? 'ahrefs';
+    this.logger.error(`ahrefs ${endpoint} HTTP ${res.status}${reason}`);
     if (res.status === 401 || res.status === 403) {
       throw new AppException(
         ErrorCode.AHREFS_UNAUTHORIZED,
-        `Ahrefs auth failed (HTTP ${res.status})`,
+        `Ahrefs auth failed (HTTP ${res.status})${reason}`,
+        res.data,
       );
     }
     if (res.status === 429) {
       throw new AppException(
         ErrorCode.AHREFS_RATE_LIMITED,
-        'Ahrefs API rate limited (HTTP 429)',
+        `Ahrefs API rate limited (HTTP 429)${reason}`,
+        res.data,
       );
     }
     throw new AppException(
       ErrorCode.AHREFS_API_ERROR,
-      `Ahrefs API error (HTTP ${res.status})`,
+      `Ahrefs API error (HTTP ${res.status})${reason}`,
+      res.data,
     );
+  }
+
+  /**
+   * สรุป error body ของ Ahrefs เป็นข้อความสั้นนำหน้าด้วย ": " (ต่อท้าย message ได้ตรง ๆ).
+   * รองรับ { error } / { message } / { errors } / string / object อื่น (stringify) — คืน ''
+   * ถ้าว่าง. ตัดที่ ~300 ตัวอักษรกัน message/log ยาวเกิน.
+   */
+  private describeAhrefsError(data: unknown): string {
+    if (data == null) return '';
+    let text: string;
+    if (typeof data === 'string') {
+      text = data;
+    } else if (typeof data === 'number' || typeof data === 'boolean') {
+      text = String(data);
+    } else if (typeof data === 'object') {
+      const obj = data as Record<string, unknown>;
+      const msg = obj.error ?? obj.message ?? obj.errors;
+      text = typeof msg === 'string' ? msg : JSON.stringify(obj);
+    } else {
+      return ''; // symbol/function/bigint — ไม่ใช่ body ที่คาด, ข้าม
+    }
+    text = text.trim();
+    if (!text) return '';
+    const MAX = 300;
+    return `: ${text.length > MAX ? `${text.slice(0, MAX)}…` : text}`;
   }
 
   /**

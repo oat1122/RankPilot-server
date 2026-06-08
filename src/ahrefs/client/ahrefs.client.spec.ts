@@ -200,6 +200,38 @@ describe('AhrefsClient.fetch (facade — เอกสาร 03 §6)', () => {
     });
   });
 
+  it('HTTP 400 → แนบ Ahrefs error body จริงเข้า message + details (เลิกกลืน body)', async () => {
+    const { client } = makeClient({
+      response: makeResponse({ error: "Unknown column 'difficulty'" }, 400),
+    });
+    const err = (await client.fetch(OPTS).catch((e: unknown) => e)) as {
+      code: ErrorCode;
+      message: string;
+      details: unknown;
+    };
+    expect(err.code).toBe(ErrorCode.AHREFS_API_ERROR);
+    expect(err.message).toContain("Unknown column 'difficulty'");
+    expect(err.details).toEqual({ error: "Unknown column 'difficulty'" });
+  });
+
+  it('fields ว่าง → ไม่ส่ง select param (endpoint แบบ fixed-object เช่น domain-rating)', async () => {
+    const { client, http } = makeClient({
+      response: makeResponse({ domain_rating: { domain_rating: 70 } }, 200, {
+        'x-units-cost': '50',
+      }),
+    });
+    await client.fetch({
+      ...OPTS,
+      endpoint: 'site-explorer/domain-rating',
+      fields: [],
+    });
+    const [, calledCfg] = http.get.mock.calls[0] as [
+      string,
+      { params: Record<string, unknown> },
+    ];
+    expect(calledCfg.params).not.toHaveProperty('select');
+  });
+
   it('network error → AHREFS_API_ERROR + คืนงบ', async () => {
     const { client, budget } = makeClient({
       httpThrows: new Error('ECONNREFUSED'),

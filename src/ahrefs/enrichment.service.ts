@@ -161,16 +161,17 @@ export interface BacklinksSummary {
  * field ที่ขอจาก Site Explorer organic-keywords (เอกสาร 03 §7 "select แคบ").
  * ชื่อตาม select ของ Ahrefs API v3 — ปรับจูนกับ response จริงได้ (รอบนี้ไม่ยิง live).
  */
+// ชื่อ column ยืนยันกับ Ahrefs v3 docs (site-explorer/organic-keywords, 2026-06-09):
+// KD = keyword_difficulty, อันดับ = best_position, ทราฟฟิกรวมต่อหน้า = sum_traffic.
+// traffic_potential/parent_topic ไม่มีใน endpoint นี้ (มีเฉพาะ Keywords Explorer overview) และ
+// traffic_value ไม่ใช่ column ที่ถูกต้อง → ตัดออก กัน Ahrefs ตอบ 400 (Unknown column).
 const ORGANIC_FIELDS = [
   'keyword',
   'volume',
-  'difficulty',
+  'keyword_difficulty',
   'cpc',
-  'traffic_potential',
-  'parent_topic', // +1 unit/row — เก็บ keywords.parent_topic เลย ตัดเรียก Keywords Explorer ซ้ำ (เอกสาร 03a §3)
-  'position',
-  'traffic',
-  'traffic_value',
+  'best_position',
+  'sum_traffic',
   'best_position_url',
 ];
 
@@ -196,7 +197,7 @@ const OVERVIEW_TTL_DEFAULT_SEC = 30 * 24 * 60 * 60; // metric เปลี่ย
  * Site Explorer top-pages (เอกสาร 03a §4.2) — คัดหน้าคุ้ม-enrich ก่อนยิง organic-keywords
  * ราย URL. select แคบ (url/traffic/top_keyword); คัด top 20% by traffic (เอกสาร 00 §4.2).
  */
-const TOPPAGES_FIELDS = ['url', 'traffic', 'top_keyword'];
+const TOPPAGES_FIELDS = ['url', 'sum_traffic', 'top_keyword'];
 const TOPPAGES_ENDPOINT = 'site-explorer/top-pages';
 const TOPPAGES_TTL_DEFAULT_SEC = 7 * 24 * 60 * 60;
 /** สัดส่วนหน้าที่คัดไป enrich ต่อ = top 20% by traffic (เอกสาร 00 §4.2 / 03 §7). */
@@ -207,11 +208,13 @@ const TOP_TRAFFIC_FRACTION = 0.2;
  * ตามเอกสาร 03a §9. TTL เป็น const (ไม่ผ่าน env — เลี่ยง sprawl; promote เป็น env ภายหลังได้).
  */
 const COMPETITORS_ENDPOINT = 'site-explorer/organic-competitors';
-const COMPETITORS_FIELDS = ['competitor_domain', 'common_keywords'];
+// keywords_common = จำนวน keyword ที่ทับกับ target (Ahrefs v3 column จริง — ไม่ใช่ common_keywords).
+const COMPETITORS_FIELDS = ['competitor_domain', 'keywords_common'];
 const COMPETITORS_TTL_SEC = 7 * 24 * 60 * 60;
 
 const SERP_ENDPOINT = 'serp-overview';
-const SERP_FIELDS = ['position', 'url', 'domain'];
+// serp-overview ไม่มี column `domain` → ขอแค่ position/url แล้ว derive domain จาก url (hostOf).
+const SERP_FIELDS = ['position', 'url'];
 const SERP_TTL_SEC = 7 * 24 * 60 * 60; // SERP overview ~7 วัน (เอกสาร 03 §3)
 
 const IDEAS_ENDPOINT_MATCHING = 'keywords-explorer/matching-terms';
@@ -219,11 +222,14 @@ const IDEAS_ENDPOINT_RELATED = 'keywords-explorer/related-terms';
 const IDEAS_FIELDS = ['keyword', 'volume'];
 const IDEAS_TTL_SEC = 30 * 24 * 60 * 60;
 
-const BACKLINKS_ENDPOINT = 'site-explorer/metrics';
-const BACKLINKS_FIELDS = ['domain_rating', 'url_rating', 'referring_domains'];
+// DR/refdomains ไม่ได้อยู่ใน endpoint เดียว: site-explorer/metrics คืน org_traffic/org_keywords
+// (ไม่ใช่ DR) และไม่รับ select. ของจริง (Ahrefs v3):
+//   - domain-rating  → { domain_rating: { domain_rating, ahrefs_rank } }   (fixed object, ไม่มี select)
+//   - backlinks-stats → { metrics: { live, live_refdomains, all_time, ... } } (fixed object, ไม่มี select)
+// UR (url_rating) ไม่มี endpoint ตรง ๆ ใน flow นี้ → เก็บเป็น null.
+const DOMAIN_RATING_ENDPOINT = 'site-explorer/domain-rating';
+const BACKLINKS_STATS_ENDPOINT = 'site-explorer/backlinks-stats';
 const BACKLINKS_TTL_SEC = 30 * 24 * 60 * 60; // backlinks summary ~30 วัน (เอกสาร 03 §3)
-/** field ที่บ่งว่า object เป็น "metric row" (response DR/refdomains เป็นค่าเดี่ยว ไม่ใช่ list). */
-const METRICS_KEYS = ['domain_rating', 'url_rating', 'referring_domains'];
 
 /**
  * EnrichmentService — flow [2] slice แรก: ดึง organic-keywords ของ domain แล้ว
@@ -262,8 +268,8 @@ export class EnrichmentService {
         // key นิ่งทั้งเดือน (ไม่ bust รายวัน) — ความถี่ refresh จริงคุมด้วย ttlSec.
         date: periodSnapshotDate(),
         // เพดาน Lite ~10 rows/req → เอา keyword ทราฟฟิกสูงก่อน (กฎ top 20% by traffic,
-        // เอกสาร 03 §7 / 03a §3). traffic อยู่ใน select แล้ว → ไม่เพิ่ม units.
-        order_by: 'traffic:desc',
+        // เอกสาร 03 §7 / 03a §3). sum_traffic อยู่ใน select แล้ว → ไม่เพิ่ม units.
+        order_by: 'sum_traffic:desc',
       },
       fields: ORGANIC_FIELDS,
       expectedRows: job.limit,
@@ -284,16 +290,17 @@ export class EnrichmentService {
         keyword,
         country: job.country,
         searchVolume: this.int(row.volume),
-        difficulty: this.int(row.difficulty),
+        difficulty: this.int(row.keyword_difficulty),
         cpc: this.num(row.cpc),
-        trafficPotential: this.int(row.traffic_potential),
-        parentTopic: this.str(row.parent_topic), // intent ยังเว้นให้ AI ตั้ง (เอกสาร 02)
+        // organic-keywords ไม่คืน traffic_potential/parent_topic (มีเฉพาะ Keywords Explorer
+        // overview) → ไม่ส่ง = upsertKeyword ข้าม field ที่ undefined ไม่ทับค่าที่ overview
+        // เคย enrich ไว้. intent ก็ยังเว้นให้ AI ตั้ง (เอกสาร 02).
       });
       keywordsUpserted += 1;
 
       // best-effort: ผูก ranking กับหน้าที่ crawl มาแล้ว — hash ต้องคิดแบบเดียวกับ crawler
       // (sha1 ของ URL ที่ normalize แล้ว ผ่าน urlHashOrNull) มิฉะนั้น join ไม่ตรง; ไม่เจอก็ข้าม
-      const rankingUrl = this.str(row.best_position_url) ?? this.str(row.url);
+      const rankingUrl = this.str(row.best_position_url);
       const urlHash = urlHashOrNull(rankingUrl);
       if (urlHash) {
         const pageId = await this.repo.findPageByUrlHash(
@@ -304,9 +311,9 @@ export class EnrichmentService {
           await this.repo.insertPageKeyword({
             pageId,
             keywordId,
-            position: this.int(row.position),
-            traffic: this.int(row.traffic),
-            trafficValue: this.num(row.traffic_value),
+            position: this.int(row.best_position),
+            traffic: this.int(row.sum_traffic),
+            // organic-keywords ไม่มี traffic_value → ปล่อย trafficValue เป็น null
           });
           pageKeywordsInserted += 1;
         }
@@ -347,7 +354,7 @@ export class EnrichmentService {
       params: {
         keywords: keywords.join(','),
         country: job.country,
-        date: periodSnapshotDate(),
+        // Keywords Explorer ไม่มี param `date` (ต่างจาก Site Explorer) → ส่งไปเสี่ยง 400.
       },
       fields: OVERVIEW_FIELDS,
       expectedRows: keywords.length,
@@ -406,7 +413,7 @@ export class EnrichmentService {
         country: job.country,
         limit: job.limit,
         date: periodSnapshotDate(),
-        order_by: 'traffic:desc',
+        order_by: 'sum_traffic:desc',
       },
       fields: TOPPAGES_FIELDS,
       expectedRows: job.limit,
@@ -417,7 +424,7 @@ export class EnrichmentService {
     const pages = extractRowArray(data)
       .map((row) => ({
         url: this.str(row.url),
-        traffic: this.int(row.traffic),
+        traffic: this.int(row.sum_traffic), // ทราฟฟิกรวมต่อหน้า (Ahrefs v3 column)
         topKeyword: this.str(row.top_keyword),
       }))
       .filter((p): p is TopPage => p.url !== null); // ทิ้งแถวที่ไม่มี url
@@ -461,7 +468,7 @@ export class EnrichmentService {
         country: job.country,
         limit: job.limit,
         date: periodSnapshotDate(),
-        order_by: 'common_keywords:desc', // คู่แข่งที่ทับ keyword มากสุดก่อน
+        order_by: 'keywords_common:desc', // คู่แข่งที่ทับ keyword มากสุดก่อน
       },
       fields: COMPETITORS_FIELDS,
       expectedRows: job.limit,
@@ -472,7 +479,7 @@ export class EnrichmentService {
     const rows = extractRowArray(data);
     let competitorsUpserted = 0;
     for (const row of rows) {
-      const domain = this.str(row.competitor_domain) ?? this.str(row.domain);
+      const domain = this.str(row.competitor_domain);
       if (!domain) continue;
       await this.repo.upsertCompetitor(job.projectId, domain);
       competitorsUpserted += 1;
@@ -512,8 +519,9 @@ export class EnrichmentService {
       params: {
         keyword: job.keyword,
         country: job.country,
-        limit: job.limit,
-        date: periodSnapshotDate(),
+        // serp-overview ใช้ `top_positions` (ไม่ใช่ limit) และ date เป็น datetime optional →
+        // ไม่ส่ง date (ใช้ snapshot ล่าสุดที่มี) กัน format YYYY-MM-01 ไม่ตรงแล้ว 400.
+        top_positions: job.limit,
       },
       fields: SERP_FIELDS,
       expectedRows: job.limit,
@@ -562,7 +570,7 @@ export class EnrichmentService {
         keywords: job.seed,
         country: job.country,
         limit: job.limit,
-        date: periodSnapshotDate(),
+        // matching/related-terms = Keywords Explorer → ไม่มี param `date` (ส่งไปเสี่ยง 400).
         order_by: 'volume:desc',
       },
       fields: IDEAS_FIELDS,
@@ -603,24 +611,35 @@ export class EnrichmentService {
    * (บริบท "หน้า rank ไหวไหม"). response เป็นค่าเดี่ยว (ไม่ใช่ list) → extractMetricsRow.
    */
   async fetchBacklinks(job: BacklinksJobData): Promise<BacklinksSummary> {
-    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+    // DR (Domain Rating) — site-explorer/domain-rating: fixed object ไม่มี select/country.
+    const dr = await this.ahrefs.fetch({
       projectId: job.projectId,
-      endpoint: BACKLINKS_ENDPOINT,
-      params: {
-        target: job.domain,
-        country: job.country,
-        date: periodSnapshotDate(),
-      },
-      fields: BACKLINKS_FIELDS,
+      endpoint: DOMAIN_RATING_ENDPOINT,
+      params: { target: job.domain, date: periodSnapshotDate() },
+      fields: [],
+      expectedRows: 1,
+      ttlSec: BACKLINKS_TTL_SEC,
+      cap: job.cap,
+    });
+    // referring domains — site-explorer/backlinks-stats: fixed object ไม่มี select/country.
+    const bl = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: BACKLINKS_STATS_ENDPOINT,
+      params: { target: job.domain, date: periodSnapshotDate() },
+      fields: [],
       expectedRows: 1,
       ttlSec: BACKLINKS_TTL_SEC,
       cap: job.cap,
     });
 
-    const row = this.extractMetricsRow(data);
-    const domainRating = this.int(row.domain_rating);
-    const urlRating = this.int(row.url_rating);
-    const referringDomains = this.int(row.referring_domains);
+    // response เป็น nested object: { domain_rating: { domain_rating } } และ { metrics: { live_refdomains } }
+    const domainRating = this.int(
+      this.nested(dr.data, 'domain_rating', 'domain_rating'),
+    );
+    const referringDomains = this.int(
+      this.nested(bl.data, 'metrics', 'live_refdomains'),
+    );
+    const urlRating = null; // UR ไม่มี endpoint ตรงใน flow นี้ (เอกสาร 03a §6)
     await this.repo.insertBacklinkSnapshot({
       projectId: job.projectId,
       pageId: null, // ระดับ domain
@@ -629,6 +648,8 @@ export class EnrichmentService {
       referringDomains,
     });
 
+    const unitsSpent = dr.unitsSpent + bl.unitsSpent;
+    const cached = dr.cached && bl.cached;
     const summary: BacklinksSummary = {
       projectId: job.projectId,
       domain: job.domain,
@@ -654,27 +675,19 @@ export class EnrichmentService {
   }
 
   /**
-   * ดึง object metric เดี่ยวจาก response (metrics/DR เป็นค่าเดี่ยว ไม่ใช่ list ของ rows):
-   * ลอง row แรกของ array ก่อน → ถ้าไม่มี ใช้ object ที่มี METRICS_KEYS (top-level หรือชั้นถัดไป
-   * เช่น { metrics: {...} }). คืน {} ถ้าหาไม่เจอ (ค่าออกเป็น null ทั้งหมด).
+   * อ่านค่าใน object ซ้อนตาม path (เช่น nested(data,'domain_rating','domain_rating')) — ใช้กับ
+   * response แบบ fixed-object ของ domain-rating/backlinks-stats. undefined ถ้า path ไม่ครบ.
    */
-  private extractMetricsRow(data: unknown): Record<string, unknown> {
-    const rows = extractRowArray(data);
-    if (rows.length > 0) return rows[0];
-    if (data && typeof data === 'object') {
-      const obj = data as Record<string, unknown>;
-      if (METRICS_KEYS.some((k) => k in obj)) return obj;
-      for (const v of Object.values(obj)) {
-        if (
-          v &&
-          typeof v === 'object' &&
-          METRICS_KEYS.some((k) => k in (v as Record<string, unknown>))
-        ) {
-          return v as Record<string, unknown>;
-        }
+  private nested(data: unknown, ...path: string[]): unknown {
+    let cur: unknown = data;
+    for (const key of path) {
+      if (cur && typeof cur === 'object') {
+        cur = (cur as Record<string, unknown>)[key];
+      } else {
+        return undefined;
       }
     }
-    return {};
+    return cur;
   }
 
   /** dedup + trim + sort keyword (cache key นิ่งไม่ขึ้นกับลำดับ/ตัวซ้ำ; ทิ้งตัวว่าง). */

@@ -15,9 +15,12 @@ export const FIELD_COST: Record<string, number> = {
   volume: 1,
   cpc: 1,
   position: 1,
+  best_position: 1,
   traffic: 1,
+  sum_traffic: 1,
   traffic_value: 1,
-  difficulty: 5,
+  difficulty: 5, // Keywords Explorer column name
+  keyword_difficulty: 5, // Site Explorer column name (organic-keywords)
   url_rating: 5,
   referring_domains: 5,
   traffic_potential: 10,

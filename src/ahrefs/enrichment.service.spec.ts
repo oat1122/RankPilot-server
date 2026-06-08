@@ -64,10 +64,10 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
           {
             keyword: 'seo',
             volume: '1000',
-            difficulty: '42',
+            keyword_difficulty: '42',
             cpc: '1.5',
-            traffic_potential: '2000',
-            parent_topic: 'search engine optimization',
+            best_position: '3',
+            sum_traffic: '900',
           },
           { keyword: '   ' }, // ว่าง → ข้าม
           { volume: 5 }, // ไม่มี keyword → ข้าม
@@ -81,17 +81,27 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
     const summary = await service.enrichOrganicKeywords(JOB);
 
     const [fetchArg] = ahrefs.fetch.mock.calls[0] as [
-      { endpoint: string; params: Record<string, unknown> },
+      { endpoint: string; params: Record<string, unknown>; fields: string[] },
     ];
     expect(fetchArg.endpoint).toBe('site-explorer/organic-keywords');
     expect(fetchArg.params).toMatchObject({
       target: 'example.com',
       country: 'th',
       limit: 10,
-      order_by: 'traffic:desc',
+      order_by: 'sum_traffic:desc',
     });
     // date pin กับ period (YYYY-MM-01) → cache key นิ่งทั้งเดือน (เอกสาร 03a §3)
     expect(fetchArg.params.date).toMatch(/^\d{4}-\d{2}-01$/);
+    // select = ชื่อ column จริงของ Ahrefs v3 (ไม่มี traffic_potential/parent_topic/traffic_value)
+    expect(fetchArg.fields).toEqual([
+      'keyword',
+      'volume',
+      'keyword_difficulty',
+      'cpc',
+      'best_position',
+      'sum_traffic',
+      'best_position_url',
+    ]);
     expect(repo.upsertKeyword).toHaveBeenCalledTimes(1);
     expect(repo.upsertKeyword).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -101,8 +111,6 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
         searchVolume: 1000,
         difficulty: 42,
         cpc: 1.5,
-        trafficPotential: 2000,
-        parentTopic: 'search engine optimization',
       }),
     );
     expect(summary).toMatchObject({
@@ -118,7 +126,9 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
     const { service, ahrefs, repo } = makeService();
     ahrefs.fetch.mockResolvedValue({
       data: {
-        keywords: [{ keyword: 'seo', volume: '', difficulty: '   ', cpc: '' }],
+        keywords: [
+          { keyword: 'seo', volume: '', keyword_difficulty: '   ', cpc: '' },
+        ],
       },
       unitsSpent: 54,
       rows: 1,
@@ -146,9 +156,8 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
         keywords: [
           {
             keyword: 'seo',
-            position: '3',
-            traffic: '120',
-            traffic_value: '45.5',
+            best_position: '3',
+            sum_traffic: '120',
             best_position_url: 'https://example.com/a',
           },
         ],
@@ -168,7 +177,6 @@ describe('EnrichmentService.enrichOrganicKeywords (flow [2] slice)', () => {
         keywordId: 101,
         position: 3,
         traffic: 120,
-        trafficValue: 45.5,
       }),
     );
     expect(summary.pageKeywordsInserted).toBe(1);
@@ -240,7 +248,8 @@ describe('EnrichmentService.enrichKeywordOverview (Tier 2 — เอกสาร
     // 'seo' ซ้ำ → ตัด, '  a  ' → 'a', '' → ทิ้ง, แล้ว sort → 'a,b,seo'
     expect(fetchArg.params.keywords).toBe('a,b,seo');
     expect(fetchArg.params).toMatchObject({ country: 'th' });
-    expect(fetchArg.params.date).toMatch(/^\d{4}-\d{2}-01$/);
+    // Keywords Explorer ไม่มี param `date` → ต้องไม่ส่ง (ส่งไปเสี่ยง 400)
+    expect(fetchArg.params).not.toHaveProperty('date');
     expect(repo.upsertKeyword).toHaveBeenCalledTimes(2);
     expect(repo.upsertKeyword).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -269,12 +278,20 @@ describe('EnrichmentService.selectTopPages (Tier 2 — เอกสาร 03a §
     ahrefs.fetch.mockResolvedValue({
       data: {
         pages: [
-          { url: 'https://example.com/a', traffic: '100', top_keyword: 'a' },
-          { url: 'https://example.com/b', traffic: '500', top_keyword: 'b' },
-          { url: 'https://example.com/c', traffic: '50' },
-          { url: 'https://example.com/d', traffic: '300' },
-          { url: 'https://example.com/e', traffic: '10' },
-          { traffic: '999' }, // ไม่มี url → ทิ้ง (ไม่นับ/ไม่ถูกคัด)
+          {
+            url: 'https://example.com/a',
+            sum_traffic: '100',
+            top_keyword: 'a',
+          },
+          {
+            url: 'https://example.com/b',
+            sum_traffic: '500',
+            top_keyword: 'b',
+          },
+          { url: 'https://example.com/c', sum_traffic: '50' },
+          { url: 'https://example.com/d', sum_traffic: '300' },
+          { url: 'https://example.com/e', sum_traffic: '10' },
+          { sum_traffic: '999' }, // ไม่มี url → ทิ้ง (ไม่นับ/ไม่ถูกคัด)
         ],
       },
       unitsSpent: 80,
@@ -291,7 +308,7 @@ describe('EnrichmentService.selectTopPages (Tier 2 — เอกสาร 03a §
     expect(fetchArg.params).toMatchObject({
       target: 'example.com',
       country: 'th',
-      order_by: 'traffic:desc',
+      order_by: 'sum_traffic:desc',
     });
     expect(summary.fetched).toBe(5); // url-less row ถูกทิ้ง
     expect(summary.topCount).toBe(1); // ceil(5 * 0.2) = 1
@@ -357,9 +374,9 @@ describe('EnrichmentService.enrichCompetitors (Tier 2 — เอกสาร 03a
     ahrefs.fetch.mockResolvedValue({
       data: {
         competitors: [
-          { competitor_domain: 'rival-a.com', common_keywords: '120' },
+          { competitor_domain: 'rival-a.com', keywords_common: '120' },
           { competitor_domain: '  ' }, // ว่าง → ข้าม
-          { common_keywords: '5' }, // ไม่มี domain → ข้าม
+          { keywords_common: '5' }, // ไม่มี domain → ข้าม
           { competitor_domain: 'rival-b.com' },
         ],
       },
@@ -376,7 +393,7 @@ describe('EnrichmentService.enrichCompetitors (Tier 2 — เอกสาร 03a
     expect(fetchArg.endpoint).toBe('site-explorer/organic-competitors');
     expect(fetchArg.params).toMatchObject({
       target: 'example.com',
-      order_by: 'common_keywords:desc',
+      order_by: 'keywords_common:desc',
     });
     expect(repo.upsertCompetitor).toHaveBeenCalledTimes(2);
     expect(repo.upsertCompetitor).toHaveBeenCalledWith(1, 'rival-a.com');
@@ -424,7 +441,12 @@ describe('EnrichmentService.fetchSerpOverview (Tier 3 — เอกสาร 03a
       { endpoint: string; params: Record<string, unknown> },
     ];
     expect(fetchArg.endpoint).toBe('serp-overview');
-    expect(fetchArg.params).toMatchObject({ keyword: 'seo tools' });
+    // serp-overview ใช้ top_positions (ไม่ใช่ limit) และไม่ส่ง date (datetime optional)
+    expect(fetchArg.params).toMatchObject({
+      keyword: 'seo tools',
+      top_positions: 10,
+    });
+    expect(fetchArg.params).not.toHaveProperty('date');
     expect(repo.insertSerpResults).toHaveBeenCalledWith([
       { keywordId: 202, position: 1, url: 'https://a.com/x', domain: 'a.com' },
       { keywordId: 202, position: 2, url: 'https://b.com/y', domain: 'b.com' },
@@ -508,40 +530,55 @@ const BL_JOB: BacklinksJobData = {
 };
 
 describe('EnrichmentService.fetchBacklinks (Tier 4 — เอกสาร 03a §6)', () => {
-  it('แกะ metric เดี่ยวจาก nested object → insert backlink_snapshot', async () => {
+  it('2 call (domain-rating + backlinks-stats) → DR/refdomains, UR=null', async () => {
     const { service, ahrefs, repo } = makeService();
-    ahrefs.fetch.mockResolvedValue({
-      data: {
-        metrics: {
-          domain_rating: '72',
-          url_rating: '40',
-          referring_domains: '1500',
+    // call 1 = domain-rating, call 2 = backlinks-stats — ทั้งคู่ fixed object (ไม่มี select)
+    ahrefs.fetch
+      .mockResolvedValueOnce({
+        data: { domain_rating: { domain_rating: '72', ahrefs_rank: 1234 } },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          metrics: {
+            live: 9000,
+            live_refdomains: '1500',
+            all_time: 12000,
+            all_time_refdomains: 1800,
+          },
         },
-      },
-      unitsSpent: 55,
-      rows: 1,
-      cached: false,
-    });
+        unitsSpent: 55,
+        rows: 0,
+        cached: false,
+      });
 
     const summary = await service.fetchBacklinks(BL_JOB);
 
-    const [fetchArg] = ahrefs.fetch.mock.calls[0] as [{ endpoint: string }];
-    expect(fetchArg.endpoint).toBe('site-explorer/metrics');
+    const calls = ahrefs.fetch.mock.calls as Array<
+      [{ endpoint: string; fields: string[] }]
+    >;
+    expect(calls[0][0].endpoint).toBe('site-explorer/domain-rating');
+    expect(calls[0][0].fields).toEqual([]); // fixed object → ไม่ส่ง select
+    expect(calls[1][0].endpoint).toBe('site-explorer/backlinks-stats');
+    expect(calls[1][0].fields).toEqual([]);
     expect(repo.insertBacklinkSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 1,
         pageId: null,
         domainRating: 72,
-        urlRating: 40,
+        urlRating: null,
         referringDomains: 1500,
       }),
     );
     expect(summary).toMatchObject({
       domain: 'example.com',
       domainRating: 72,
-      urlRating: 40,
+      urlRating: null,
       referringDomains: 1500,
-      unitsSpent: 55,
+      unitsSpent: 105, // 50 + 55
+      cached: false,
     });
   });
 });

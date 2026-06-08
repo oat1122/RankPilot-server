@@ -8,6 +8,8 @@ describe('ProjectsService', () => {
     listByOwner: jest.fn(),
     create: jest.fn(),
     findOwned: jest.fn(),
+    update: jest.fn(),
+    remove: jest.fn(),
   });
 
   it('listForUser → ห่อ items + ส่ง ownerId', async () => {
@@ -40,5 +42,42 @@ describe('ProjectsService', () => {
     const svc = new ProjectsService(repo as never);
     await expect(svc.getOwned(9, 7)).resolves.toEqual({ id: 9 });
     expect(repo.findOwned).toHaveBeenCalledWith(9, 7);
+  });
+
+  it('update เจอ → คืน project ที่แก้แล้ว + ส่ง projectId/ownerId/dto', async () => {
+    const repo = makeRepo();
+    const dto = { name: 'B' };
+    repo.update.mockResolvedValue({ id: 9, name: 'B' });
+    const svc = new ProjectsService(repo as never);
+    await expect(svc.update(7, 9, dto as never)).resolves.toMatchObject({
+      name: 'B',
+    });
+    expect(repo.update).toHaveBeenCalledWith(9, 7, dto);
+  });
+
+  it('update ไม่ใช่เจ้าของ/ไม่เจอ (repo คืน null) → PROJECT_NOT_FOUND', async () => {
+    const repo = makeRepo();
+    repo.update.mockResolvedValue(null);
+    const svc = new ProjectsService(repo as never);
+    await expect(svc.update(7, 9, { name: 'B' })).rejects.toBeInstanceOf(
+      AppException,
+    );
+  });
+
+  it('remove เจอ → ลบ + คืน resource ที่ถูกลบ', async () => {
+    const repo = makeRepo();
+    repo.findOwned.mockResolvedValue({ id: 9 });
+    repo.remove.mockResolvedValue(undefined);
+    const svc = new ProjectsService(repo as never);
+    await expect(svc.remove(7, 9)).resolves.toEqual({ id: 9 });
+    expect(repo.remove).toHaveBeenCalledWith(9, 7);
+  });
+
+  it('remove ไม่เจอ → PROJECT_NOT_FOUND (ไม่เรียก repo.remove)', async () => {
+    const repo = makeRepo();
+    repo.findOwned.mockResolvedValue(null);
+    const svc = new ProjectsService(repo as never);
+    await expect(svc.remove(7, 9)).rejects.toBeInstanceOf(AppException);
+    expect(repo.remove).not.toHaveBeenCalled();
   });
 });

@@ -37,6 +37,10 @@ describe('summarizeScores (gap #4 aggregate)', () => {
   it('ทุกค่าเป็น null → avg = null แต่ pagesScored นับ row', () => {
     expect(
       summarizeScores([{ healthScore: null, keywordCoverage: null }]),
-    ).toEqual({ avgHealthScore: null, avgKeywordCoverage: null, pagesScored: 1 });
+    ).toEqual({
+      avgHealthScore: null,
+      avgKeywordCoverage: null,
+      pagesScored: 1,
+    });
   });
 });

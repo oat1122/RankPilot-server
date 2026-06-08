@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -11,6 +13,7 @@ import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectDto, ProjectListDto } from './dto/project-response.dto';
 import { ProjectsService } from './projects.service';
 
@@ -50,5 +53,30 @@ export class ProjectsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.projects.getOwned(projectId, user.id);
+  }
+
+  @Patch(':projectId')
+  @ApiEnvelopeResponse(ProjectDto, {
+    description:
+      'แก้ไขโปรเจค (เฉพาะเจ้าของ) — partial: ส่งเฉพาะ field ที่จะแก้',
+  })
+  update(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateProjectDto,
+  ) {
+    return this.projects.update(user.id, projectId, dto);
+  }
+
+  @Delete(':projectId')
+  @ApiEnvelopeResponse(ProjectDto, {
+    description:
+      'ลบโปรเจค + ข้อมูลลูกทั้งหมด (เฉพาะเจ้าของ) — คืน resource ที่ถูกลบ',
+  })
+  remove(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projects.remove(user.id, projectId);
   }
 }

@@ -26,10 +26,10 @@ export class ClerkTokenVerifier {
     // { data, errors } ∴ ครอบ try/catch แปลงเป็น 401 (ไม่งั้นหลุดเป็น 500 ผ่าน AllExceptionsFilter).
     let claims: Record<string, unknown>;
     try {
-      claims = (await verifyToken(token, {
+      claims = await verifyToken(token, {
         secretKey,
         authorizedParties: this.authorizedParties(),
-      })) as Record<string, unknown>;
+      });
     } catch (err) {
       throw new AppException(
         ErrorCode.UNAUTHORIZED,

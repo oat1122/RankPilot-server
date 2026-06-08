@@ -64,6 +64,21 @@ describe('keywordCoverage', () => {
     expect(r.score).toBe(20); // เฉพาะ url
   });
 
+  it('keyword อยู่ใน host/โดเมน (EMD) แต่ slug ไม่มี → url = false (ไม่ false +20)', () => {
+    const r = keywordCoverage(
+      healthy({
+        title: null,
+        h1: null,
+        headings: { h1: [], h2: [], h3: [] },
+        paragraphs: [],
+        url: 'https://best-running-shoes.com/about', // keyword อยู่ใน host เท่านั้น
+        primaryKeyword: 'best running shoes',
+      }),
+    );
+    expect(r.breakdown.url).toBe(false); // เทียบเฉพาะ pathname (/about) → ไม่ match host
+    expect(r.score).toBe(0);
+  });
+
   it('ไม่มี primary keyword → score = null', () => {
     const r = keywordCoverage(healthy({ primaryKeyword: null }));
     expect(r.score).toBeNull();

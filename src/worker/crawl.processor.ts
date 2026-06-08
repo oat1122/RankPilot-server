@@ -58,7 +58,9 @@ export class CrawlProcessor extends WorkerHost {
       const htmlStorageKey = await this.storage.putHtml({
         projectId,
         crawlId,
-        urlHash: urlHash(result.url),
+        // key ด้วย finalUrl (หลัง redirect) ให้ตรงกับ pages.url_hash ที่ persist คิดจาก finalUrl
+        // (crawler.repo upsertPageTx) — ถ้าใช้ result.url ที่ขอ hash จะไม่ตรงเมื่อมี redirect
+        urlHash: urlHash(result.finalUrl),
         html: rawHtml,
       });
       const cwv = await this.psi.cwv(result.finalUrl);

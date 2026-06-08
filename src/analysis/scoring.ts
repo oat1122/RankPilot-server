@@ -149,12 +149,14 @@ export function keywordCoverage(view: SnapshotView): CoverageResult {
       },
     };
   }
-  // url: decode ก่อน (slug มัก url-encode) — ทิ้ง error ถ้า decode ไม่ได้
+  // url: เทียบเฉพาะ "slug" (pathname) ไม่ใช่ทั้ง URL — ไม่งั้น keyword ที่อยู่ใน host/โดเมน
+  // (เช่น running-shoes.com) หรือ query string จะ match ทุกหน้า (false +20). decode ก่อน
+  // (slug มัก url-encode); URL/decode พังเมื่อไหร่ค่อย fallback ค่าดิบ.
   let urlText = view.url;
   try {
-    urlText = decodeURIComponent(view.url);
+    urlText = decodeURIComponent(new URL(view.url).pathname);
   } catch {
-    /* ใช้ค่าดิบ */
+    /* URL/decode พัง → ใช้ค่าดิบ */
   }
   const intro = view.paragraphs?.[0] ?? null;
   const h2Hit = (view.headings?.h2 ?? []).some((h) => contains(h, kw));

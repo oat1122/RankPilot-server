@@ -24,7 +24,7 @@ import {
   customType,
   primaryKey,
 } from 'drizzle-orm/mysql-core';
-import { vector } from './types/vector';
+import { vector, EMBEDDING_DIM } from './types/vector';
 
 /**
  * LONGBLOB — Drizzle ไม่มี blob type สำหรับ mysql core → custom type. mysql2 คืนค่าเป็น Buffer
@@ -193,7 +193,7 @@ export const pageEmbeddings = mysqlTable(
     crawlId: fk('crawl_id').notNull(),
     model: varchar('model', { length: 64 }).notNull(), // 'voyage-3.5'
     contentHash: char('content_hash', { length: 40 }).notNull(),
-    embedding: vector('embedding', { dimensions: 1024 }).notNull(),
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIM }).notNull(),
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (t) => ({

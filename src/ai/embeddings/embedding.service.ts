@@ -117,7 +117,14 @@ export class EmbeddingService {
         ),
       })
       .from(pageEmbeddings)
-      .where(inArray(pageEmbeddings.pageId, candidatePageIds));
+      .where(
+        and(
+          inArray(pageEmbeddings.pageId, candidatePageIds),
+          // กรอง model เดียวกับ targetVec — ถ้า VOYAGE_MODEL เปลี่ยน embedding รุ่นเก่าจะอยู่คนละ
+          // vector space → cosine ไม่มีความหมาย (แต่ vec_distance_cosine ยังคำนวณได้ถ้ามิติเท่า)
+          eq(pageEmbeddings.model, this.model()),
+        ),
+      );
 
     // page อาจมีหลาย embedding (ต่อ crawl) → เก็บ distance ต่ำสุด (คล้ายสุด) ต่อ page
     const best = new Map<number, number>();

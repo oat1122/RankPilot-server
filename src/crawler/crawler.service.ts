@@ -124,7 +124,11 @@ export class CrawlerService {
 
     const links: CrawlLink[] = [];
     $('a[href]').each((_, el) => {
-      const abs = this.safeUrl($(el).attr('href') ?? '', base ?? undefined);
+      // ข้าม href ว่าง/whitespace/fragment ล้วน — new URL('', base)/('#x', base) ไม่ throw แต่
+      // resolve เป็น URL "หน้าตัวเอง" → internal link ปลอม + self-link (href="") บัง orphan detector
+      const href = ($(el).attr('href') ?? '').trim();
+      if (!href || href.startsWith('#')) return;
+      const abs = this.safeUrl(href, base ?? undefined);
       if (!abs || (abs.protocol !== 'http:' && abs.protocol !== 'https:'))
         return;
       links.push({
@@ -141,7 +145,11 @@ export class CrawlerService {
     // alt ว่าง/ไม่มี = hasAlt:false (ตรรกะ missingAlt เดิม).
     const imageRows: CrawlImage[] = [];
     $('img').each((_, el) => {
-      const abs = this.safeUrl($(el).attr('src') ?? '', base ?? undefined);
+      // ข้าม <img> ไม่มี src/ว่าง — new URL('', base) ไม่ throw แต่ resolve เป็น URL หน้าตัวเอง
+      // → image row ปลอม (src=หน้าตัวเอง) + พอง imagesMissingAlt (เอกสาร: "นับเฉพาะรูปที่มี src")
+      const rawSrc = ($(el).attr('src') ?? '').trim();
+      if (!rawSrc) return;
+      const abs = this.safeUrl(rawSrc, base ?? undefined);
       const src = abs ? abs.toString() : '';
       if (!src || src.length > 2048) return;
       const alt = this.attrOrNull($(el).attr('alt'));
@@ -231,7 +239,15 @@ export class CrawlerService {
 
   private resolveFinalUrl(res: AxiosResponse, fallback: string): string {
     const req = res.request as { res?: { responseUrl?: string } } | undefined;
-    return req?.res?.responseUrl ?? fallback;
+    const raw = req?.res?.responseUrl ?? fallback;
+    // normalize ให้เป็นรูปเดียวกับ url ที่ขอ (idempotent) — ไม่งั้น redirectTo (repo) จะ false-positive
+    // เมื่อ responseUrl ต่างจาก url แค่ trailing slash/รูป canonical, และ url_hash/storage key ฝั่ง
+    // persist จะคิดจาก finalUrl นี้ (ดู crawler.repo upsertPageTx). fallback ถูก normalize มาแล้ว.
+    try {
+      return normalizeUrl(raw);
+    } catch {
+      return fallback;
+    }
   }
 
   private collectText($: cheerio.CheerioAPI, selector: string): string[] {

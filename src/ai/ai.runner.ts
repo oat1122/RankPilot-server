@@ -127,6 +127,9 @@ export class AiRunner {
       return summary;
     } catch (err) {
       await this.repo.failRun(runId).catch(() => undefined);
+      // run ล้ม (เช่น LLM 402/429 ตอน OpenRouter ไม่มีเครดิต) → checkpoint ที่ langgraph เขียนไว้
+      // ใช้ resume ไม่ได้แล้ว ลบทิ้ง best-effort กัน ai_checkpoints บวม (เทียบ resumeReview).
+      await this.engine.cleanup(threadId).catch(() => undefined);
       throw err;
     }
   }

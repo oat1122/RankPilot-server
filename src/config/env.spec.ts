@@ -75,4 +75,17 @@ describe('validateEnv', () => {
       expect(() => validateEnv(noDb)).toThrow(/DATABASE_URL/);
     });
   });
+
+  describe('VOYAGE_DIM', () => {
+    it('default = มิติคอลัมน์ embedding (1024)', () => {
+      const env = validateEnv({ ...base });
+      expect(env.VOYAGE_DIM).toBe(1024);
+    });
+
+    it('ปฏิเสธค่าที่ไม่ตรงมิติคอลัมน์ (fail-fast แทน insert vector ล้มเงียบ)', () => {
+      expect(() => validateEnv({ ...base, VOYAGE_DIM: '512' })).toThrow(
+        /VOYAGE_DIM/,
+      );
+    });
+  });
 });

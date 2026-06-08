@@ -201,8 +201,12 @@ export class AhrefsClient {
       | string[]
       | undefined;
     const raw = Array.isArray(header) ? header[0] : header;
+    // แยก "ไม่มี header/ว่าง" (→ fallback = ที่ประเมิน) ออกจาก "x-units-cost: 0" จริง (→ 0).
+    // ก่อนแก้ใช้ n > 0 → response ที่คิด 0 unit จริง (เช่น cached ฝั่ง Ahrefs) ถูก fallback เป็น
+    // estimate ทำให้ settle/bumpUsage คิดงบเกินจริง.
+    if (raw == null || raw === '') return fallback;
     const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
   }
 
   /** นับ rows ด้วย logic เดียวกับ EnrichmentService (extractRowArray) — กัน rows ≠ fetched. */

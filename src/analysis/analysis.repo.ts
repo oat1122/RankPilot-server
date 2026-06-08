@@ -41,6 +41,9 @@ export interface SnapshotRow {
 /** สัญญาณระดับหน้า จาก ranking (primary keyword + traffic รวม). */
 export interface PageSignals {
   primaryKeyword: string | null;
+  /** position ดีสุด (min) ของ primary keyword ในหน้าต่าง recency — null ถ้าไม่มี ranking.
+   *  expose ไว้ให้ [4] AI ใช้ตรงกับ primaryKeyword (กันการ re-lookup row ผิดด้วย .find). */
+  position: number | null;
   pageTraffic: number;
 }
 
@@ -113,7 +116,11 @@ export function aggregatePageSignals(
   // 3) aggregate ต่อหน้า: primary = position น้อยสุด, pageTraffic = Σ traffic
   const best = new Map<number, { keyword: string; position: number }>();
   for (const v of latest.values()) {
-    const sig = out.get(v.pageId) ?? { primaryKeyword: null, pageTraffic: 0 };
+    const sig = out.get(v.pageId) ?? {
+      primaryKeyword: null,
+      position: null,
+      pageTraffic: 0,
+    };
     sig.pageTraffic += v.traffic ?? 0;
     out.set(v.pageId, sig);
 
@@ -123,7 +130,11 @@ export function aggregatePageSignals(
         best.set(v.pageId, { keyword: v.keyword, position: v.position });
     }
   }
-  for (const [pageId, b] of best) out.get(pageId)!.primaryKeyword = b.keyword;
+  for (const [pageId, b] of best) {
+    const sig = out.get(pageId)!;
+    sig.primaryKeyword = b.keyword;
+    sig.position = b.position; // ใช้ position ที่ชนะ (windowed min) ไม่ทิ้งให้ caller re-lookup
+  }
   return out;
 }
 

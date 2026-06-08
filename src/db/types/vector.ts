@@ -1,6 +1,13 @@
 import { customType } from 'drizzle-orm/mysql-core';
 
 /**
+ * มิติ (dimension) ของ page_embeddings.embedding — เป็น single source of truth ระหว่าง schema
+ * (คอลัมน์ VECTOR) กับ env (VOYAGE_DIM ต้องเท่ากันเป๊ะ ไม่งั้น insert vector ล้มเงียบ ๆ).
+ * voyage-3.5 default = 1024; เปลี่ยนค่านี้ต้องทำ migration เปลี่ยนคอลัมน์ด้วย.
+ */
+export const EMBEDDING_DIM = 1024;
+
+/**
  * MariaDB `VECTOR(n)` — Drizzle ยังไม่มี native type (เอกสาร 01 §1).
  * เก็บเป็น packed float32 little-endian (mysql2 Buffer) — ตรงกับรูปไบนารีที่ MariaDB
  * VECTOR ใช้ภายใน.

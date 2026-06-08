@@ -95,7 +95,10 @@ describe('AnalysisRunner', () => {
 
   it('รายงาน pagesWithRanking = จำนวนหน้าที่มี ranking signal (handoff [2]→[3])', async () => {
     const signals = new Map<number, PageSignals>([
-      [1, { primaryKeyword: 'best running shoes', pageTraffic: 100 }],
+      [
+        1,
+        { primaryKeyword: 'best running shoes', position: 2, pageTraffic: 100 },
+      ],
     ]);
     const repo = mockRepo({
       snapshotsForCrawl: jest.fn().mockResolvedValue([snap({ pageId: 1 })]),
@@ -140,8 +143,11 @@ describe('AnalysisRunner', () => {
       url: 'https://example.com/lonely',
     });
     const signals = new Map<number, PageSignals>([
-      [1, { primaryKeyword: 'best running shoes', pageTraffic: 100 }],
-      [2, { primaryKeyword: null, pageTraffic: 0 }],
+      [
+        1,
+        { primaryKeyword: 'best running shoes', position: 2, pageTraffic: 100 },
+      ],
+      [2, { primaryKeyword: null, position: null, pageTraffic: 0 }],
     ]);
     const inbound = new Map<number, number>([[1, 3]]); // page 2 = orphan
 

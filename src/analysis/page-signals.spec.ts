@@ -29,7 +29,11 @@ describe('aggregatePageSignals (flow [2]→[3] ranking signal)', () => {
       row({ keyword: 'a', position: 5, traffic: 40 }),
       row({ keyword: 'b', position: 2, traffic: 60 }),
     ]);
-    expect(out.get(1)).toEqual({ primaryKeyword: 'b', pageTraffic: 100 });
+    expect(out.get(1)).toEqual({
+      primaryKeyword: 'b',
+      position: 2,
+      pageTraffic: 100,
+    });
   });
 
   it('dedup เอา capture ล่าสุดต่อ (page|keyword) — ไม่นับ traffic ซ้ำ', () => {
@@ -37,7 +41,11 @@ describe('aggregatePageSignals (flow [2]→[3] ranking signal)', () => {
       row({ keyword: 'a', position: 9, traffic: 40, capturedAt: T }),
       row({ keyword: 'a', position: 3, traffic: 100, capturedAt: T + HOUR }),
     ]);
-    expect(out.get(1)).toEqual({ primaryKeyword: 'a', pageTraffic: 100 });
+    expect(out.get(1)).toEqual({
+      primaryKeyword: 'a',
+      position: 3,
+      pageTraffic: 100,
+    });
   });
 
   it('ตัด keyword ที่หลุดอันดับรอบเก่า (เกิน recency window) → pageTraffic ไม่พอง', () => {
@@ -46,7 +54,11 @@ describe('aggregatePageSignals (flow [2]→[3] ranking signal)', () => {
       row({ keyword: 'b', position: 5, traffic: 50, capturedAt: T - 30 * DAY }), // เก่า > 7 วัน
     ]);
     // b ถูกตัด (capture เกินหน้าต่างจาก max ของหน้า) → เหลือแค่ a
-    expect(out.get(1)).toEqual({ primaryKeyword: 'a', pageTraffic: 100 });
+    expect(out.get(1)).toEqual({
+      primaryKeyword: 'a',
+      position: 3,
+      pageTraffic: 100,
+    });
   });
 
   it('หลายรอบ enrich ในหน้าต่างเดียวกัน (domain + exact) สะสม coverage รวมกัน', () => {
@@ -61,7 +73,11 @@ describe('aggregatePageSignals (flow [2]→[3] ranking signal)', () => {
       }),
     ]);
     // ทุกแถวอยู่ในหน้าต่าง → primary = a (pos 3 น้อยสุด, d ไม่มี position ไม่นับ primary)
-    expect(out.get(1)).toEqual({ primaryKeyword: 'a', pageTraffic: 210 });
+    expect(out.get(1)).toEqual({
+      primaryKeyword: 'a',
+      position: 3,
+      pageTraffic: 210,
+    });
   });
 
   it('หน้าต่าง recency แยกอิสระต่อหน้า', () => {
@@ -84,8 +100,16 @@ describe('aggregatePageSignals (flow [2]→[3] ranking signal)', () => {
         capturedAt: T - 30 * DAY,
       }),
     ]);
-    expect(out.get(1)).toEqual({ primaryKeyword: 'a', pageTraffic: 10 });
-    expect(out.get(2)).toEqual({ primaryKeyword: 'z', pageTraffic: 70 });
+    expect(out.get(1)).toEqual({
+      primaryKeyword: 'a',
+      position: 2,
+      pageTraffic: 10,
+    });
+    expect(out.get(2)).toEqual({
+      primaryKeyword: 'z',
+      position: 4,
+      pageTraffic: 70,
+    });
   });
 
   it('ขอบหน้าต่าง: พอดี window = เก็บ, เกิน 1ms = ตัด', () => {

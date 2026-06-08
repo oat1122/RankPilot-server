@@ -180,13 +180,19 @@ export class AiService implements OnModuleInit {
       this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
     try {
       const job = await withTimeout(
-        this.queue.add('resume-review', {
-          projectId,
-          pageId: run.pageId,
-          runId,
-          decision: dto.decision,
-          note: dto.note,
-        } satisfies PageAuditResumeJobData),
+        this.queue.add(
+          'resume-review',
+          {
+            projectId,
+            pageId: run.pageId,
+            runId,
+            decision: dto.decision,
+            note: dto.note,
+          } satisfies PageAuditResumeJobData,
+          // jobId คงที่ต่อ run → BullMQ dedupe: กดอนุมัติซ้ำ/retry จะไม่ resume ซ้ำ (กัน persistRun
+          // เขียน ai_recommendations ซ้ำซ้อน ∵ guard awaiting_review เช็คตอน enqueue ไม่กันการแข่ง)
+          { jobId: `resume:${runId}` },
+        ),
         timeoutMs,
       );
       return {

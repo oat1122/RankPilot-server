@@ -151,6 +151,23 @@ describe('AhrefsClient.fetch (facade — เอกสาร 03 §6)', () => {
     );
   });
 
+  it('x-units-cost: 0 จริง → คิด 0 unit (ไม่ fallback เป็น estimate → ไม่คิดงบเกิน)', async () => {
+    const { client, budget, repo } = makeClient({
+      response: makeResponse({ keywords: [{ keyword: 'a' }] }, 200, {
+        'x-units-cost': '0',
+      }),
+    });
+    const res = await client.fetch(OPTS);
+    expect(res.unitsSpent).toBe(0);
+    expect(budget.settle).toHaveBeenCalledWith(
+      1,
+      expect.any(String),
+      ESTIMATE,
+      0,
+    );
+    expect(repo.bumpUsage).toHaveBeenCalledWith(1, expect.any(String), 0);
+  });
+
   it('ไม่มี AHREFS_API_KEY (cache miss) → throw AHREFS_UNAUTHORIZED ก่อน reserve', async () => {
     const { client, budget } = makeClient({ apiKey: undefined });
     await expect(client.fetch(OPTS)).rejects.toMatchObject({

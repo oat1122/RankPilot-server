@@ -294,7 +294,9 @@ export class AiRepo {
       schemaTypes: toStringArray(parseJson(snap.schemaTypes)),
       primaryKeyword,
       primaryKeywordId,
-      position: primaryRow?.position ?? null,
+      // ใช้ position ที่ aggregatePageSignals คัดมาแล้ว (windowed min ของ primary keyword) —
+      // ไม่ใช่ primaryRow?.position ที่มาจาก .find() แถวแรกตาม DB order (อาจ stale/ไม่ใช่ min)
+      position: signals?.position ?? null,
       pageTraffic: signals?.pageTraffic ?? 0,
       trafficPotential: primaryRow?.trafficPotential ?? null,
       keywordIntent: primaryRow?.intent ?? null,

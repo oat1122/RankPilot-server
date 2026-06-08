@@ -138,18 +138,21 @@ describe('AiRunner.auditPage', () => {
     });
   });
 
-  it('engine.run โยน → failRun(runId) แล้ว rethrow', async () => {
+  it('engine.run โยน → failRun(runId) + cleanup(threadId) แล้ว rethrow', async () => {
     const repo = mockRepo();
     const boom = new Error('llm down');
+    const cleanup = jest.fn().mockResolvedValue(undefined);
     const runner = makeRunner(
       repo,
-      stubEngine({ run: jest.fn().mockRejectedValue(boom) }),
+      stubEngine({ run: jest.fn().mockRejectedValue(boom), cleanup }),
     );
 
     await expect(runner.auditPage({ projectId: 1, pageId: 5 })).rejects.toBe(
       boom,
     );
     expect(repo.failRun).toHaveBeenCalledWith(99);
+    // run ล้ม → checkpoint ใช้ resume ไม่ได้ ต้องลบกัน ai_checkpoints บวม (เช่น LLM 402/429)
+    expect(cleanup).toHaveBeenCalledWith('page:5:run:99');
   });
 });
 

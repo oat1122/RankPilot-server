@@ -264,4 +264,50 @@ describe('CrawlerService', () => {
       expect(result.url).toBe(expected);
     });
   });
+
+  describe('crawl() — ลิงก์/รูปที่ resolve เป็นหน้าตัวเอง ต้องไม่ถูกนับ (phantom rows)', () => {
+    // new URL('', base)/('#x', base)/('   ', base) ไม่ throw แต่คืน URL ของหน้าตัวเอง →
+    // ถ้าไม่กรองก่อน resolve จะได้ internal link ปลอม (href="" = self-link บัง orphan) + image ปลอม
+    const HTML = `<html><head><title>t</title></head><body>
+      <a href="#">top</a>
+      <a href="#section">jump</a>
+      <a href="">self</a>
+      <a href="   ">blank</a>
+      <a href="/real">real internal</a>
+      <img alt="no src" />
+      <img src="" alt="empty src" />
+      <img src="/real.png" alt="ok" />
+    </body></html>`;
+
+    it('ข้าม href ว่าง/fragment + <img> ไม่มี src — ไม่สร้าง link/image ปลอม', async () => {
+      const service = makeService(makeResponse(HTML));
+      const { result } = await service.crawl('https://example.com/p');
+      // เหลือเฉพาะ /real — #, #section, "", "   " ถูกข้ามก่อน resolve
+      expect(result.links).toHaveLength(1);
+      expect(result.internalLinks).toBe(1);
+      expect(result.links[0].url).toBe('https://example.com/real');
+      // เหลือเฉพาะ /real.png — <img> ไม่มี src และ src="" ถูกข้าม (ไม่พอง imagesMissingAlt)
+      expect(result.imageRows).toHaveLength(1);
+      expect(result.images.total).toBe(1);
+      expect(result.images.missingAlt).toBe(0);
+      expect(result.imageRows[0].src).toBe('https://example.com/real.png');
+    });
+  });
+
+  describe('crawl() — finalUrl normalize (กัน redirectTo false-positive)', () => {
+    it('normalize responseUrl ให้เป็นรูป canonical เดียวกับ url (ไม่มี redirect จริง)', async () => {
+      // server ตอบ responseUrl ไม่มี trailing slash แม้ไม่ได้ redirect → ต้อง normalize ให้เท่า url
+      const service = makeService(
+        makeResponse(
+          '<html><body>x</body></html>',
+          'text/html',
+          200,
+          'https://example.com',
+        ),
+      );
+      const { result } = await service.crawl('https://example.com/');
+      expect(result.finalUrl).toBe('https://example.com/');
+      expect(result.finalUrl).toBe(result.url); // → repo จะตั้ง redirectTo = null
+    });
+  });
 });

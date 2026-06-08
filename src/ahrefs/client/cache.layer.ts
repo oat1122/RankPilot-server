@@ -29,12 +29,20 @@ export class CacheLayer {
 
     const row = await this.repo.findFreshCache(endpoint, paramsHash);
     if (row) {
+      // ahrefs_cache.response เป็น json() column → driver คืนกลับเป็น "string" (ดู memory /
+      // parseJson ใน ai.repo, analysis.runner). ต้อง parse ก่อน ไม่งั้น caller ได้ string →
+      // extractRowArray = [] (rows=0 เงียบ ๆ) + setex(JSON.stringify(string)) เป็น double-encode
+      // ทำให้ hot cache เพี้ยนค้าง 1 ชม. (sticky zero-row).
+      const response: unknown =
+        typeof row.response === 'string'
+          ? (JSON.parse(row.response) as unknown)
+          : row.response;
       await this.redis.setex(
         this.hotKey(paramsHash),
         HOT_TTL_SEC,
-        JSON.stringify(row.response),
+        JSON.stringify(response),
       );
-      return row.response;
+      return response;
     }
     return null;
   }

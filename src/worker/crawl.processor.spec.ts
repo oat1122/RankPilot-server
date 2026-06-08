@@ -1,5 +1,6 @@
 import { CrawlProcessor } from './crawl.processor';
 import type { CrawlResult } from '../crawler/crawler.schema';
+import { urlHash } from '../common/url';
 
 function makeProcessor() {
   const crawler = { crawl: jest.fn() };
@@ -73,6 +74,28 @@ describe('CrawlProcessor.process', () => {
       }),
     );
     expect(repo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('storage key คิดจาก finalUrl (หลัง redirect) ให้ตรง pages.url_hash ไม่ใช่ url ที่ขอ', async () => {
+    const { processor, crawler, repo, storage, psi } = makeProcessor();
+    const redirected = {
+      ...RESULT,
+      url: 'https://example.com/old',
+      finalUrl: 'https://example.com/new',
+    };
+    crawler.crawl.mockResolvedValue({ result: redirected, rawHtml: '<html>' });
+    repo.createCrawl.mockResolvedValue(42);
+    storage.putHtml.mockResolvedValue('k');
+    psi.cwv.mockResolvedValue({ lcpMs: null, clsX1000: null, inpMs: null });
+    repo.persistPage.mockResolvedValue({ pageId: 7, snapshotId: 9 });
+
+    await processor.process(
+      job({ url: 'https://example.com/old', projectId: 1 }),
+    );
+
+    expect(storage.putHtml).toHaveBeenCalledWith(
+      expect.objectContaining({ urlHash: urlHash('https://example.com/new') }),
+    );
   });
 
   it('persistPage throw → markFailed(crawlId) + rethrow (ไม่กลืน error)', async () => {

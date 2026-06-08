@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EMBEDDING_DIM } from '../db/types/vector';
 
 /**
  * Env schema — fail-fast ตอน boot (เอกสาร 04 §5 / 05 §4).
@@ -125,7 +126,16 @@ export const envSchema = z.object({
   VOYAGE_API_KEY: z.string().min(1).optional(),
   VOYAGE_BASE_URL: z.string().url().default('https://api.voyageai.com/v1'),
   VOYAGE_MODEL: z.string().min(1).default('voyage-3.5'),
-  VOYAGE_DIM: z.coerce.number().int().positive().default(1024),
+  // VOYAGE_DIM ส่งเป็น output_dimension ให้ Voyage (voyage.client) — ต้องเท่ากับมิติคอลัมน์
+  // page_embeddings.embedding (EMBEDDING_DIM) เป๊ะ ไม่งั้น vector ที่ได้ insert ไม่ลง (best-effort
+  // จับเงียบ → embedding ล้มถาวร). fail-fast ที่ boot ตาม convention แทนพังเงียบตอน insert.
+  VOYAGE_DIM: z.coerce
+    .number()
+    .int()
+    .refine((v) => v === EMBEDDING_DIM, {
+      message: `VOYAGE_DIM ต้องเท่ากับ ${EMBEDDING_DIM} (มิติคอลัมน์ page_embeddings.embedding) — เปลี่ยนค่าต้องทำ migration คอลัมน์ด้วย`,
+    })
+    .default(EMBEDDING_DIM),
   VOYAGE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 
   // LangSmith tracing (เอกสาร 02 §6 Phase 6) — LangChain อ่าน LANGCHAIN_* จาก process.env เอง

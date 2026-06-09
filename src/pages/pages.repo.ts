@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, like, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
 import { DB } from '../db/db.module';
 import type { Db } from '../db/db.module';
 import {
@@ -58,8 +58,17 @@ export class PagesRepo {
         crawlId: null,
       };
 
+    // หนึ่งหน้าอาจมีหลาย snapshot ใน crawl เดียว (page_snapshots ไม่มี unique (crawl_id,page_id))
+    // → เลือก snapshot ล่าสุดต่อหน้า = MAX(id) GROUP BY page_id ภายใน crawl ที่เลือก
+    // กัน pageId ซ้ำ (React duplicate key) + total (pagination) เกินจริง. crawlId scope มากับ subquery.
+    const latestSnapIds = this.db
+      .select({ id: sql<number>`max(${pageSnapshots.id})` })
+      .from(pageSnapshots)
+      .where(eq(pageSnapshots.crawlId, cid))
+      .groupBy(pageSnapshots.pageId);
+
     const conds = [
-      eq(pageSnapshots.crawlId, cid),
+      inArray(pageSnapshots.id, latestSnapIds),
       eq(pages.projectId, projectId),
     ];
     if (opts.search) {

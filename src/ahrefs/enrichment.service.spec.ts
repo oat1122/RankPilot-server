@@ -8,6 +8,8 @@ import type {
   SerpOverviewJobData,
   KeywordIdeasJobData,
   BacklinksJobData,
+  PageEnrichJobData,
+  SiteEnrichJobData,
 } from './enrichment.service';
 import type { AhrefsClient } from './client/ahrefs.client';
 import type { AhrefsRepo } from './ahrefs.repo';
@@ -22,6 +24,10 @@ function makeService() {
     insertSerpResults: jest.fn().mockResolvedValue(undefined),
     insertContentGap: jest.fn().mockResolvedValue(undefined),
     insertBacklinkSnapshot: jest.fn().mockResolvedValue(undefined),
+    getPage: jest
+      .fn()
+      .mockResolvedValue({ id: 55, url: 'https://example.com/p' }),
+    getPrimaryKeyword: jest.fn().mockResolvedValue(null),
   };
   const config = { get: () => 604800 } as unknown as ConfigService;
   const service = new EnrichmentService(
@@ -578,6 +584,240 @@ describe('EnrichmentService.fetchBacklinks (Tier 4 — เอกสาร 03a §
       urlRating: null,
       referringDomains: 1500,
       unitsSpent: 105, // 50 + 55
+      cached: false,
+    });
+  });
+
+  it('ราย URL (target+pageId) → backlinks-stats mode=exact, snapshot ผูก pageId, อ่าน url_rating', async () => {
+    const { service, ahrefs, repo } = makeService();
+    ahrefs.fetch
+      .mockResolvedValueOnce({
+        data: { domain_rating: { domain_rating: '40' } },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      .mockResolvedValueOnce({
+        data: { metrics: { live_refdomains: '7', url_rating: '21' } },
+        unitsSpent: 55,
+        rows: 0,
+        cached: false,
+      });
+
+    const summary = await service.fetchBacklinks({
+      ...BL_JOB,
+      target: 'https://example.com/p',
+      pageId: 55,
+    });
+
+    const calls = ahrefs.fetch.mock.calls as Array<
+      [{ endpoint: string; params: Record<string, unknown> }]
+    >;
+    // DR ยังยิงด้วย domain (DR เป็น metric ระดับ domain เสมอ) — ไม่ใส่ mode
+    expect(calls[0][0].params).toMatchObject({ target: 'example.com' });
+    expect(calls[0][0].params).not.toHaveProperty('mode');
+    // backlinks-stats ยิงด้วย URL + mode=exact (นับเฉพาะ backlinks ที่ชี้มาที่ URL นี้)
+    expect(calls[1][0].params).toMatchObject({
+      target: 'https://example.com/p',
+      mode: 'exact',
+    });
+    expect(repo.insertBacklinkSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageId: 55,
+        domainRating: 40,
+        urlRating: 21,
+        referringDomains: 7,
+      }),
+    );
+    expect(summary).toMatchObject({
+      domain: 'https://example.com/p',
+      urlRating: 21,
+      referringDomains: 7,
+    });
+  });
+});
+
+const PAGE_JOB: PageEnrichJobData = {
+  projectId: 1,
+  pageId: 55,
+  url: 'https://example.com/blog/post',
+  domain: 'example.com',
+  country: 'th',
+  cap: 100_000,
+  limit: 30,
+};
+
+describe('EnrichmentService.enrichPage (page deep-enrich orchestration)', () => {
+  it('orchestrate organic(exact) + backlinks(url,pageId) + serp(primary kw)', async () => {
+    const { service, ahrefs, repo } = makeService();
+    repo.getPrimaryKeyword.mockResolvedValue('seo tools');
+    repo.upsertKeyword.mockResolvedValue(202);
+    ahrefs.fetch
+      // 1) organic (exact)
+      .mockResolvedValueOnce({
+        data: {
+          keywords: [
+            { keyword: 'seo tools', sum_traffic: '120', best_position: '4' },
+          ],
+        },
+        unitsSpent: 50,
+        rows: 1,
+        cached: false,
+      })
+      // 2) domain-rating
+      .mockResolvedValueOnce({
+        data: { domain_rating: { domain_rating: '60' } },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      // 3) backlinks-stats (url, mode=exact) — มี url_rating
+      .mockResolvedValueOnce({
+        data: { metrics: { live_refdomains: '12', url_rating: '33' } },
+        unitsSpent: 55,
+        rows: 0,
+        cached: false,
+      })
+      // 4) serp-overview ของ primary keyword
+      .mockResolvedValueOnce({
+        data: {
+          serp: [{ position: '1', url: 'https://a.com/x', domain: 'a.com' }],
+        },
+        unitsSpent: 150,
+        rows: 1,
+        cached: false,
+      });
+
+    const summary = await service.enrichPage(PAGE_JOB);
+
+    const calls = ahrefs.fetch.mock.calls as Array<
+      [{ endpoint: string; params: Record<string, unknown> }]
+    >;
+    expect(calls[0][0].endpoint).toBe('site-explorer/organic-keywords');
+    expect(calls[0][0].params).toMatchObject({
+      target: 'https://example.com/blog/post',
+      mode: 'exact',
+    });
+    expect(calls[2][0].endpoint).toBe('site-explorer/backlinks-stats');
+    expect(calls[2][0].params).toMatchObject({
+      target: 'https://example.com/blog/post',
+      mode: 'exact',
+    });
+    expect(repo.insertBacklinkSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageId: 55,
+        domainRating: 60,
+        urlRating: 33,
+        referringDomains: 12,
+      }),
+    );
+    expect(calls[3][0].endpoint).toBe('serp-overview');
+    expect(repo.getPrimaryKeyword).toHaveBeenCalledWith(55);
+    expect(summary).toMatchObject({
+      pageId: 55,
+      primaryKeyword: 'seo tools',
+      domainRating: 60,
+      urlRating: 33,
+      referringDomains: 12,
+      serpInserted: 1,
+      unitsSpent: 50 + 50 + 55 + 150,
+      cached: false,
+    });
+  });
+
+  it('ข้าม serp เมื่อไม่มี primary keyword (หน้ายังไม่ติดอันดับ)', async () => {
+    const { service, ahrefs, repo } = makeService();
+    repo.getPrimaryKeyword.mockResolvedValue(null);
+    ahrefs.fetch
+      .mockResolvedValueOnce({
+        data: { keywords: [] },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      .mockResolvedValueOnce({
+        data: { domain_rating: { domain_rating: '60' } },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      .mockResolvedValueOnce({
+        data: { metrics: { live_refdomains: '0' } },
+        unitsSpent: 55,
+        rows: 0,
+        cached: false,
+      });
+
+    const summary = await service.enrichPage(PAGE_JOB);
+    expect(ahrefs.fetch).toHaveBeenCalledTimes(3); // ไม่มี serp call
+    expect(summary.primaryKeyword).toBeNull();
+    expect(summary.serpInserted).toBe(0);
+  });
+});
+
+const SITE_JOB: SiteEnrichJobData = {
+  projectId: 1,
+  domain: 'example.com',
+  country: 'th',
+  cap: 100_000,
+  competitorsLimit: 10,
+};
+
+describe('EnrichmentService.enrichSite (site deep-enrich orchestration)', () => {
+  it('orchestrate backlinks(domain) + competitors', async () => {
+    const { service, ahrefs, repo } = makeService();
+    ahrefs.fetch
+      // 1) domain-rating
+      .mockResolvedValueOnce({
+        data: { domain_rating: { domain_rating: '55' } },
+        unitsSpent: 50,
+        rows: 0,
+        cached: false,
+      })
+      // 2) backlinks-stats (domain — ไม่มี mode=exact)
+      .mockResolvedValueOnce({
+        data: { metrics: { live_refdomains: '900' } },
+        unitsSpent: 55,
+        rows: 0,
+        cached: false,
+      })
+      // 3) organic-competitors
+      .mockResolvedValueOnce({
+        data: {
+          competitors: [
+            { competitor_domain: 'rival-a.com' },
+            { competitor_domain: 'rival-b.com' },
+          ],
+        },
+        unitsSpent: 60,
+        rows: 2,
+        cached: false,
+      });
+
+    const summary = await service.enrichSite(SITE_JOB);
+
+    const calls = ahrefs.fetch.mock.calls as Array<
+      [{ endpoint: string; params: Record<string, unknown> }]
+    >;
+    expect(calls[0][0].endpoint).toBe('site-explorer/domain-rating');
+    expect(calls[1][0].endpoint).toBe('site-explorer/backlinks-stats');
+    expect(calls[1][0].params).not.toHaveProperty('mode'); // domain-level
+    expect(calls[2][0].endpoint).toBe('site-explorer/organic-competitors');
+    // backlinks เขียน snapshot ระดับ domain (pageId null)
+    expect(repo.insertBacklinkSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageId: null,
+        domainRating: 55,
+        referringDomains: 900,
+      }),
+    );
+    expect(repo.upsertCompetitor).toHaveBeenCalledTimes(2);
+    expect(summary).toMatchObject({
+      domain: 'example.com',
+      domainRating: 55,
+      referringDomains: 900,
+      competitorsUpserted: 2,
+      unitsSpent: 50 + 55 + 60,
       cached: false,
     });
   });

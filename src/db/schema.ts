@@ -280,6 +280,8 @@ export const backlinkSnapshots = mysqlTable(
     projectId: fk('project_id').notNull(),
     pageId: fk('page_id'), // null = ระดับ domain
     referringDomains: int('referring_domains'),
+    // BL = total live backlinks (backlinks-stats → metrics.live) — รายงานเว็บเต็ม (apnth.com template).
+    backlinks: int('backlinks'),
     urlRating: smallint('url_rating'),
     domainRating: smallint('domain_rating'),
     capturedAt: timestamp('captured_at').notNull().defaultNow(),
@@ -309,6 +311,29 @@ export const competitors = mysqlTable(
     domain: varchar('domain', { length: 255 }).notNull(),
   },
   (t) => ({ uq: uniqueIndex('uq_comp').on(t.projectId, t.domain) }),
+);
+
+/* ---------- site_reports (รายงานเว็บเต็ม แบบ apnth.com template) ---------- */
+// 1 row ต่อ project (upsert = ล่าสุดเสมอ). รวม field ที่ "ไม่ใช่ metric Ahrefs ตรง ๆ" ของรายงานเต็ม:
+// WHOIS (registrar/วันจด → AGE) + meta description (จาก crawler) + LW (refdomains-history won/lost) +
+// SS (spam ประมาณการ) + AI mentions (brand-radar) + analysis (AI: จุดแข็ง/จุดอ่อน/คำแนะนำ/timeline).
+// DR/UR/BL/refdomains/organic/keyword/competitors ยังอ่านจากตารางเดิม (backlink_snapshots ฯลฯ).
+export const siteReports = mysqlTable(
+  'site_reports',
+  {
+    id: pk(),
+    projectId: fk('project_id').notNull(),
+    registrar: varchar('registrar', { length: 255 }), // WHOIS/RDAP — null = ดึงไม่ได้
+    domainCreatedAt: timestamp('domain_created_at'), // วันจดทะเบียน (RDAP) → คำนวณ AGE ตอนอ่าน
+    metaDescription: varchar('meta_description', { length: 1024 }), // จาก page_snapshots หน้าแรก
+    refdomainsNew: int('refdomains_new'), // LW: ref domains ใหม่ (refdomains-history) — flag-gated
+    refdomainsLost: int('refdomains_lost'), // LW: ref domains ที่หาย — flag-gated
+    spamScore: smallint('spam_score'), // SS: ประมาณการ % (ไม่ใช่ metric Ahrefs) — flag-gated, null=ไม่ทำ
+    aiMentions: int('ai_mentions'), // brand-radar (อาจไม่อยู่ใน plan) — flag-gated, null=ไม่ทำ
+    analysis: json('analysis'), // { strengths[], weaknesses[], recommendations[], timeline }
+    generatedAt: timestamp('generated_at').notNull().defaultNow(),
+  },
+  (t) => ({ uq: uniqueIndex('uq_site_reports_project').on(t.projectId) }),
 );
 
 /* ---------- analysis outputs ---------- */

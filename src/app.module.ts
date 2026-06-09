@@ -10,14 +10,17 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { ClerkAuthGuard } from './auth/clerk-auth.guard';
 import { HealthModule } from './health/health.module';
+import { AppConfigModule } from './app-config/app-config.module';
 import { UsersModule } from './users/users.module';
 import { ProjectsModule } from './projects/projects.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { PagesModule } from './pages/pages.module';
 import { EnrichModule } from './enrich/enrich.module';
+import { ReportModule } from './report/report.module';
 import { AnalysisModule } from './analysis/analysis.module';
 import { AiModule } from './ai/ai.module';
 import { TrendsModule } from './trends/trends.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -46,6 +49,8 @@ import { TrendsModule } from './trends/trends.module';
     // auth layer (Clerk Bearer) — providers ให้ ClerkAuthGuard ด้านล่าง (เอกสาร 05 §4)
     AuthModule,
     HealthModule,
+    // GET /config (public) — เปิดเผย config ที่ FE ใช้ build UI (เพดาน site crawl ฯลฯ)
+    AppConfigModule,
     // UserManager (@Roles admin) — list/เชิญ/เปลี่ยน role/soft-disable user; ไม่มี self sign-up (เอกสาร 05 §4)
     UsersModule,
     // Projects (@Global) — list/detail/create + ProjectAccessGuard ที่ domain อื่น reuse (เอกสาร 01 §2)
@@ -55,12 +60,16 @@ import { TrendsModule } from './trends/trends.module';
     PagesModule,
     // Ahrefs Enrichment [2] (producer) — POST/GET /projects/:id/ahrefs/* (เอกสาร 03)
     EnrichModule,
+    // รายงานเว็บเต็ม (producer) — POST/GET /projects/:id/ahrefs/{site-report,report} (Ahrefs+WHOIS+AI)
+    ReportModule,
     // Analysis [3] (producer) — POST/GET /projects/:id/analysis/* (เอกสาร 04 §7)
     AnalysisModule,
     // AI Advisor [4] (producer) — POST/GET /projects/:id/ai/* (เอกสาร 02)
     AiModule,
     // Trends [5] — GET /projects/:id/trends/* (score + crawl activity, เอกสาร 06)
     TrendsModule,
+    // Jobs — GET /jobs: รวมสถานะงานทุกคิวของ user (in-progress รอด refresh + กระดิ่งแจ้งเตือน)
+    JobsModule,
   ],
   providers: [
     // validate ทุก request ที่ใช้ createZodDto ทั่วแอป (เอกสาร 04 §6)

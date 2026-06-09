@@ -16,6 +16,8 @@ import type {
   SerpOverviewJobData,
   KeywordIdeasJobData,
   BacklinksJobData,
+  PageEnrichJobData,
+  SiteEnrichJobData,
   EnrichmentSummary,
   KeywordOverviewSummary,
   TopPagesSummary,
@@ -23,6 +25,8 @@ import type {
   SerpOverviewSummary,
   KeywordIdeasSummary,
   BacklinksSummary,
+  PageEnrichSummary,
+  SiteEnrichSummary,
 } from '../ahrefs/enrichment.service';
 
 /** RateLimiter ระดับ queue (เอกสาร 03 §5) — ≤5 req/วินาที กัน Ahrefs ตอบ 429.
@@ -40,7 +44,9 @@ type AhrefsJobData =
   | CompetitorsJobData
   | SerpOverviewJobData
   | KeywordIdeasJobData
-  | BacklinksJobData;
+  | BacklinksJobData
+  | PageEnrichJobData
+  | SiteEnrichJobData;
 type AhrefsJobResult =
   | EnrichmentSummary
   | KeywordOverviewSummary
@@ -48,7 +54,9 @@ type AhrefsJobResult =
   | CompetitorsSummary
   | SerpOverviewSummary
   | KeywordIdeasSummary
-  | BacklinksSummary;
+  | BacklinksSummary
+  | PageEnrichSummary
+  | SiteEnrichSummary;
 
 /**
  * Consumer ของ queue 'ahrefs' — รันใน worker process แยกจาก api (เอกสาร 00 §4).
@@ -98,6 +106,10 @@ export class AhrefsProcessor extends WorkerHost {
         );
       case 'backlinks':
         return this.enrichment.fetchBacklinks(job.data as BacklinksJobData);
+      case 'page-enrich':
+        return this.enrichment.enrichPage(job.data as PageEnrichJobData);
+      case 'site-enrich':
+        return this.enrichment.enrichSite(job.data as SiteEnrichJobData);
       default:
         throw new Error(`unknown ahrefs job '${job.name}'`);
     }

@@ -127,3 +127,27 @@ export const ahrefsBudgetSchema = z.object({
   remaining: z.number(),
 });
 export class AhrefsBudgetDto extends createZodDto(ahrefsBudgetSchema) {}
+
+/**
+ * GET overview — ภาพรวมเว็บระดับโดเมน (DB-read): DR/refdomains (latest domain backlink_snapshots)
+ * + organic ทั้งเว็บ (sum page_keywords) + คู่แข่ง. backlinks = null ถ้ายังไม่ enrich.
+ */
+export const ahrefsOverviewSchema = z.object({
+  domain: z.string(),
+  backlinks: z
+    .object({
+      domainRating: z.number().nullable(),
+      urlRating: z.number().nullable(),
+      referringDomains: z.number().nullable(),
+      capturedAt: z.coerce.string(),
+    })
+    .nullable(),
+  organic: z.object({
+    traffic: z.number(),
+    value: z.number(),
+    keywords: z.number(),
+  }),
+  competitors: z.array(z.string()),
+  competitorsCount: z.number(),
+});
+export class AhrefsOverviewDto extends createZodDto(ahrefsOverviewSchema) {}

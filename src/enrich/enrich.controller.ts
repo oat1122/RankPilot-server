@@ -18,9 +18,12 @@ import {
   SerpOverviewDto,
   KeywordIdeasDto,
   BacklinksDto,
+  PageEnrichDto,
+  SiteEnrichDto,
 } from './dto/create-enrich.dto';
 import {
   AhrefsBudgetDto,
+  AhrefsOverviewDto,
   EnrichEnqueuedDto,
   EnrichStatusDto,
 } from './dto/enrich-response.dto';
@@ -129,6 +132,41 @@ export class EnrichController {
     @Body() dto: BacklinksDto,
   ) {
     return this.enrich.enqueueBacklinks(projectId, dto);
+  }
+
+  @Post('page-enrich')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิววิเคราะห์เชิงลึกรายหน้า — organic(exact)+backlinks(url)+serp ของ primary keyword (เอกสาร 03a §3/§5/§6)',
+  })
+  pageEnrich(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: PageEnrichDto,
+  ) {
+    return this.enrich.enqueuePageEnrich(projectId, dto);
+  }
+
+  @Post('site-enrich')
+  @ApiEnvelopeResponse(EnrichEnqueuedDto, {
+    status: 201,
+    description:
+      'ตั้งคิวดึง Ahrefs ระดับโดเมน — backlinks (DR/refdomains) + competitors (เอกสาร 03a §4.3/§6)',
+  })
+  siteEnrich(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: SiteEnrichDto,
+  ) {
+    return this.enrich.enqueueSiteEnrich(projectId, dto);
+  }
+
+  @Get('overview')
+  @ApiEnvelopeResponse(AhrefsOverviewDto, {
+    description:
+      'ภาพรวมเว็บระดับโดเมน — DR/refdomains + organic ทั้งเว็บ + คู่แข่ง (DB-read)',
+  })
+  overview(@Param('projectId', ParseIntPipe) projectId: number) {
+    return this.enrich.siteOverview(projectId);
   }
 
   @Get('enrich/:jobId')

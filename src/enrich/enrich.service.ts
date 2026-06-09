@@ -17,6 +17,8 @@ import type {
   SerpOverviewJobData,
   KeywordIdeasJobData,
   BacklinksJobData,
+  PageEnrichJobData,
+  SiteEnrichJobData,
   EnrichmentSummary,
   KeywordOverviewSummary,
   TopPagesSummary,
@@ -24,6 +26,8 @@ import type {
   SerpOverviewSummary,
   KeywordIdeasSummary,
   BacklinksSummary,
+  PageEnrichSummary,
+  SiteEnrichSummary,
 } from '../ahrefs/enrichment.service';
 import type {
   CreateEnrichDto,
@@ -33,6 +37,8 @@ import type {
   SerpOverviewDto,
   KeywordIdeasDto,
   BacklinksDto,
+  PageEnrichDto,
+  SiteEnrichDto,
 } from './dto/create-enrich.dto';
 
 /** ทุก job ของ queue 'ahrefs' (แยกด้วย job.name) — producer/consumer ใช้ชุดเดียวกัน. */
@@ -43,7 +49,9 @@ type AhrefsJobData =
   | CompetitorsJobData
   | SerpOverviewJobData
   | KeywordIdeasJobData
-  | BacklinksJobData;
+  | BacklinksJobData
+  | PageEnrichJobData
+  | SiteEnrichJobData;
 type AhrefsJobResult =
   | EnrichmentSummary
   | KeywordOverviewSummary
@@ -51,7 +59,9 @@ type AhrefsJobResult =
   | CompetitorsSummary
   | SerpOverviewSummary
   | KeywordIdeasSummary
-  | BacklinksSummary;
+  | BacklinksSummary
+  | PageEnrichSummary
+  | SiteEnrichSummary;
 type EnrichQueue = Queue<AhrefsJobData, AhrefsJobResult>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม */
@@ -64,6 +74,10 @@ const DEFAULT_TOPPAGES_LIMIT = 100;
 const DEFAULT_COMPETITORS_LIMIT = 10;
 const DEFAULT_SERP_LIMIT = 10;
 const DEFAULT_IDEAS_LIMIT = 50;
+/** default จำนวน organic-keywords ราย URL ตอน page-enrich (เหมือน fan-out per-page = 30). */
+const DEFAULT_PAGE_ENRICH_LIMIT = 30;
+/** จำนวนคู่แข่งที่ส่งไปแสดงบนการ์ดภาพรวมเว็บ (รายการ; count ทั้งหมดส่งแยก). */
+const SITE_COMPETITORS_DISPLAY_LIMIT = 12;
 
 /**
  * EnrichService (api side) — บางตามกฎ api ≠ worker (เอกสาร 00 §4): โหลด project,
@@ -187,6 +201,68 @@ export class EnrichService implements OnModuleInit {
     return this.addJob('backlinks', data, projectId);
   }
 
+  /**
+   * enqueue วิเคราะห์เชิงลึกรายหน้า (job 'page-enrich' — ปุ่ม on-demand บน page detail).
+   * resolve url ของหน้า (โยน NOT_FOUND ถ้าไม่พบ/ข้าม tenant) ก่อนตั้งคิว — worker orchestrate
+   * organic(exact)+backlinks(url)+serp(primary kw) ตามลำดับ (เอกสาร 03a §3/§5/§6).
+   */
+  async enqueuePageEnrich(projectId: number, dto: PageEnrichDto) {
+    const project = await this.loadProject(projectId);
+    const page = await this.repo.getPage(projectId, dto.pageId);
+    if (!page) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        `page ${dto.pageId} not found in project ${projectId}`,
+      );
+    }
+    const data: PageEnrichJobData = {
+      projectId,
+      pageId: page.id,
+      url: page.url,
+      domain: project.domain,
+      country: this.countryOf(project, dto.country),
+      cap: this.capOf(project),
+      limit: dto.limit ?? DEFAULT_PAGE_ENRICH_LIMIT,
+    };
+    return this.addJob('page-enrich', data, projectId);
+  }
+
+  /**
+   * enqueue ดึง Ahrefs ระดับโดเมน (job 'site-enrich' — ปุ่ม "ดึงข้อมูลเว็บ" บน dashboard):
+   * worker orchestrate backlinks(domain DR/refdomains) + competitors ตามลำดับ (เอกสาร 03a §4.3/§6).
+   */
+  async enqueueSiteEnrich(projectId: number, dto: SiteEnrichDto) {
+    const project = await this.loadProject(projectId);
+    const data: SiteEnrichJobData = {
+      projectId,
+      domain: project.domain,
+      country: this.countryOf(project, dto.country),
+      cap: this.capOf(project),
+      competitorsLimit: dto.competitorsLimit ?? DEFAULT_COMPETITORS_LIMIT,
+    };
+    return this.addJob('site-enrich', data, projectId);
+  }
+
+  /**
+   * ภาพรวมเว็บระดับโดเมน (DB-read ล้วน → รันใน request thread ได้): DR/refdomains ล่าสุด +
+   * organic ทั้งเว็บ (sum page_keywords) + คู่แข่ง. ค่าจาก enrich ที่เคยรัน (ปุ่ม site-enrich/auto-chain).
+   */
+  async siteOverview(projectId: number) {
+    const project = await this.loadProject(projectId);
+    const [backlinks, organic, competitors] = await Promise.all([
+      this.repo.getDomainBacklinks(projectId),
+      this.repo.getSiteOrganic(projectId),
+      this.repo.getSiteCompetitors(projectId, SITE_COMPETITORS_DISPLAY_LIMIT),
+    ]);
+    return {
+      domain: project.domain,
+      backlinks,
+      organic,
+      competitors: competitors.domains,
+      competitorsCount: competitors.total,
+    };
+  }
+
   async status(jobId: string) {
     const job = await this.queue.getJob(jobId);
     if (!job)
@@ -259,7 +335,9 @@ export class EnrichService implements OnModuleInit {
       | 'competitors'
       | 'serp-overview'
       | 'keyword-ideas'
-      | 'backlinks',
+      | 'backlinks'
+      | 'page-enrich'
+      | 'site-enrich',
     data: AhrefsJobData,
     projectId: number,
   ) {

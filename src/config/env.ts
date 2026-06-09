@@ -112,6 +112,28 @@ export const envSchema = z.object({
     .positive()
     .default(7 * 24 * 60 * 60),
 
+  // รายงานเว็บเต็ม (site report — apnth.com template). field ที่ "ไม่ใช่ core metric Ahrefs" gate
+  // ด้วย flag (default ปิด) ∵ มีต้นทุน units เพิ่ม / อาจไม่อยู่ใน plan Lite → ปิด = แสดง "—" ในรายงาน
+  // โดยไม่ทำให้ทั้งก้อนพัง (degrade gracefully). เปิดเฉพาะเมื่อ plan รองรับ + ยอมจ่าย units.
+  //   - LW: site-explorer/refdomains-history (ref domains won/lost) — Tier สูง อาจไม่อยู่ใน Lite.
+  //   - SS: ประมาณการ spam จาก DR distribution ของ refdomains (ยิง site-explorer/refdomains เพิ่ม).
+  //   - AI mentions: brand-radar/ai-responses — เอกสาร 03a เว้นไว้ (ไม่อยู่ใน plan ปัจจุบัน).
+  AHREFS_REFDOMAINS_HISTORY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SITE_SPAM_ESTIMATE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  AHREFS_BRANDRADAR_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  // WHOIS ผ่าน RDAP (Registration Data Access Protocol — แทน WHOIS เดิม, คืน JSON). host คงที่
+  // (SSRF-safe) → ดึง registrar + วันจดทะเบียน → คำนวณ AGE. TLD ที่ไม่มี RDAP (.th ฯลฯ) → null.
+  RDAP_BASE_URL: z.string().url().default('https://rdap.org'),
+
   // OpenRouter (เอกสาร 02 §9) — LLM provider เดียวของ stage [4] AI Advisor, ยิงจาก worker
   // queue 'ai' (api ≠ worker). key optional แบบเดียวกับ AHREFS_API_KEY: ไม่ใส่ก็ boot ได้
   // (mkModel จะโยน AI_NOT_CONFIGURED ตอนเรียกจริงในโหนด LLM). base url default ของ OpenRouter.

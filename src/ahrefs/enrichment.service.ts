@@ -144,15 +144,82 @@ export interface BacklinksJobData {
   domain: string;
   country: string;
   cap: number;
+  // target = URL เฉพาะหน้า (ระดับ URL, backlinks-stats mode=exact) ถ้าส่งมา; ไม่ส่ง = ระดับ domain.
+  target?: string;
+  // pageId ของ backlink_snapshots (page-scoped) — null/undefined = ระดับ domain.
+  pageId?: number | null;
 }
 
-/** สรุปผล backlinks — insert backlink_snapshots (DR/UR/refdomains ระดับ domain). */
+/** สรุปผล backlinks — insert backlink_snapshots (DR/UR/refdomains/backlinks ระดับ domain/URL). */
 export interface BacklinksSummary {
   projectId: number;
   domain: string;
   domainRating: number | null;
   urlRating: number | null;
   referringDomains: number | null;
+  backlinks: number | null; // BL = total live backlinks (backlinks-stats → metrics.live)
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** ผล refdomains-history (LW: ref domains ใหม่/หาย) — flag-gated; null = ดึงไม่ได้/ปิด. */
+export interface RefdomainsHistoryResult {
+  refdomainsNew: number | null;
+  refdomainsLost: number | null;
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** ผลประมาณการ spam (SS) จาก DR distribution ของ refdomains — flag-gated; null = ปิด/ดึงไม่ได้. */
+export interface SpamEstimateResult {
+  spamScore: number | null; // % ของ refdomains ที่ DR ต่ำ (≤ SPAM_DR_THRESHOLD)
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** payload ของ job 'page-enrich' — วิเคราะห์เชิงลึกรายหน้า (orchestrate Ahrefs ระดับ URL). */
+export interface PageEnrichJobData {
+  projectId: number;
+  pageId: number;
+  url: string; // target ระดับ exact ของหน้านี้
+  domain: string;
+  country: string;
+  cap: number;
+  limit: number; // จำนวน organic-keywords ราย URL (mode=exact)
+}
+
+/** สรุปผล page-enrich — รวม 3 ขั้น (organic exact + backlinks ราย URL + serp primary kw). */
+export interface PageEnrichSummary {
+  projectId: number;
+  pageId: number;
+  url: string;
+  organicFetched: number;
+  pageKeywordsInserted: number;
+  domainRating: number | null;
+  urlRating: number | null;
+  referringDomains: number | null;
+  primaryKeyword: string | null;
+  serpInserted: number;
+  unitsSpent: number;
+  cached: boolean;
+}
+
+/** payload ของ job 'site-enrich' — ดึง Ahrefs ระดับโดเมน (ปุ่ม on-demand บน dashboard). */
+export interface SiteEnrichJobData {
+  projectId: number;
+  domain: string;
+  country: string;
+  cap: number;
+  competitorsLimit: number;
+}
+
+/** สรุปผล site-enrich — รวม backlinks (domain DR/refdomains) + competitors. */
+export interface SiteEnrichSummary {
+  projectId: number;
+  domain: string;
+  domainRating: number | null;
+  referringDomains: number | null;
+  competitorsUpserted: number;
   unitsSpent: number;
   cached: boolean;
 }
@@ -216,6 +283,8 @@ const SERP_ENDPOINT = 'serp-overview';
 // serp-overview ไม่มี column `domain` → ขอแค่ position/url แล้ว derive domain จาก url (hostOf).
 const SERP_FIELDS = ['position', 'url'];
 const SERP_TTL_SEC = 7 * 24 * 60 * 60; // SERP overview ~7 วัน (เอกสาร 03 §3)
+/** จำนวน SERP rows ที่ดึงตอน page-enrich (top 10 คู่แข่ง — พอสำหรับการ์ด SERP บน page detail). */
+const PAGE_SERP_LIMIT = 10;
 
 const IDEAS_ENDPOINT_MATCHING = 'keywords-explorer/matching-terms';
 const IDEAS_ENDPOINT_RELATED = 'keywords-explorer/related-terms';
@@ -230,6 +299,18 @@ const IDEAS_TTL_SEC = 30 * 24 * 60 * 60;
 const DOMAIN_RATING_ENDPOINT = 'site-explorer/domain-rating';
 const BACKLINKS_STATS_ENDPOINT = 'site-explorer/backlinks-stats';
 const BACKLINKS_TTL_SEC = 30 * 24 * 60 * 60; // backlinks summary ~30 วัน (เอกสาร 03 §3)
+
+// รายงานเว็บเต็ม (apnth.com template) — endpoint เสริมที่ flag-gated (อาจไม่อยู่ใน plan Lite).
+// refdomains-history (LW) คืน list ราย period { date, new, lost }; refdomains (SS) คืน DR ราย
+// referring domain. ชื่อ column อาจต้องจูนกับ response จริง (client surface error body — memory).
+const REFDOMAINS_HISTORY_ENDPOINT = 'site-explorer/refdomains-history';
+const REFDOMAINS_HISTORY_FIELDS = ['date', 'new', 'lost'];
+const REFDOMAINS_ENDPOINT = 'site-explorer/refdomains';
+const REFDOMAINS_FIELDS = ['domain', 'domain_rating'];
+/** จำนวน refdomains ที่ sample มาคำนวณ spam (DR ต่ำสุดก่อน) — คุม units. */
+const SPAM_SAMPLE_LIMIT = 100;
+/** refdomain ที่ DR ≤ ค่านี้ นับเป็น "คุณภาพต่ำ" สำหรับประมาณการ spam. */
+const SPAM_DR_THRESHOLD = 5;
 
 /**
  * EnrichmentService — flow [2] slice แรก: ดึง organic-keywords ของ domain แล้ว
@@ -611,6 +692,11 @@ export class EnrichmentService {
    * (บริบท "หน้า rank ไหวไหม"). response เป็นค่าเดี่ยว (ไม่ใช่ list) → extractMetricsRow.
    */
   async fetchBacklinks(job: BacklinksJobData): Promise<BacklinksSummary> {
+    // target ระดับ URL (mode=exact) ถ้าส่งมา ไม่งั้น = ทั้ง domain. DR เป็น metric ระดับ domain
+    // เสมอ (Ahrefs ไม่มี DR ราย URL) → ยิงด้วย domain; UR/refdomains ดึงตาม target ได้.
+    const target = job.target ?? job.domain;
+    const isUrlTarget = job.target != null && job.target !== job.domain;
+
     // DR (Domain Rating) — site-explorer/domain-rating: fixed object ไม่มี select/country.
     const dr = await this.ahrefs.fetch({
       projectId: job.projectId,
@@ -621,46 +707,225 @@ export class EnrichmentService {
       ttlSec: BACKLINKS_TTL_SEC,
       cap: job.cap,
     });
-    // referring domains — site-explorer/backlinks-stats: fixed object ไม่มี select/country.
+    // refdomains/UR — site-explorer/backlinks-stats: fixed object ไม่มี select/country.
+    // ราย URL ใส่ mode=exact (นับ backlinks ที่ชี้มาที่ URL นี้เท่านั้น ไม่ใช่ทั้งโดเมน).
     const bl = await this.ahrefs.fetch({
       projectId: job.projectId,
       endpoint: BACKLINKS_STATS_ENDPOINT,
-      params: { target: job.domain, date: periodSnapshotDate() },
+      params: {
+        target,
+        date: periodSnapshotDate(),
+        ...(isUrlTarget ? { mode: 'exact' } : {}),
+      },
       fields: [],
       expectedRows: 1,
       ttlSec: BACKLINKS_TTL_SEC,
       cap: job.cap,
     });
 
-    // response เป็น nested object: { domain_rating: { domain_rating } } และ { metrics: { live_refdomains } }
+    // response เป็น nested object: { domain_rating: { domain_rating } } และ
+    // { metrics: { live_refdomains, url_rating? } }. UR มีเฉพาะตอน target เป็น URL (ราย URL).
     const domainRating = this.int(
       this.nested(dr.data, 'domain_rating', 'domain_rating'),
     );
     const referringDomains = this.int(
       this.nested(bl.data, 'metrics', 'live_refdomains'),
     );
-    const urlRating = null; // UR ไม่มี endpoint ตรงใน flow นี้ (เอกสาร 03a §6)
+    const urlRating = this.int(this.nested(bl.data, 'metrics', 'url_rating'));
+    // BL = total live backlinks (backlinks-stats → metrics.live) — รายงานเว็บเต็ม (apnth.com template).
+    const backlinks = this.int(this.nested(bl.data, 'metrics', 'live'));
     await this.repo.insertBacklinkSnapshot({
       projectId: job.projectId,
-      pageId: null, // ระดับ domain
+      pageId: job.pageId ?? null, // page-scoped เมื่อ enrich ราย URL ไม่งั้น = domain-level
       domainRating,
       urlRating,
       referringDomains,
+      backlinks,
     });
 
     const unitsSpent = dr.unitsSpent + bl.unitsSpent;
     const cached = dr.cached && bl.cached;
     const summary: BacklinksSummary = {
       projectId: job.projectId,
-      domain: job.domain,
+      domain: target, // = URL เมื่อ enrich ราย URL, ไม่งั้น = domain
       domainRating,
       urlRating,
       referringDomains,
+      backlinks,
       unitsSpent,
       cached,
     };
     this.logger.log(
-      `backlinks#${job.projectId} ${job.domain} → DR=${domainRating} UR=${urlRating} refdom=${referringDomains} units=${unitsSpent} cached=${cached}`,
+      `backlinks#${job.projectId} ${target} → DR=${domainRating} UR=${urlRating} BL=${backlinks} refdom=${referringDomains} units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /**
+   * refdomains-history (LW: ref domains ใหม่/หาย — เอกสาร 03a §6, Tier สูง). flag-gated โดย caller
+   * (SiteReportRunner) ∵ อาจไม่อยู่ใน plan Lite. ยิงผ่านงบ/cache ครบ. response เป็น list ราย
+   * เดือน { date, new, lost } → เอาแถวล่าสุด (new/lost ของช่วงล่าสุด). best-effort: error โยนกลับให้
+   * caller จับ (degrade เป็น null) — ไม่เขียน DB ที่นี่ (runner รวมลง site_reports).
+   */
+  async fetchRefdomainsHistory(
+    job: SiteEnrichJobData,
+  ): Promise<RefdomainsHistoryResult> {
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: REFDOMAINS_HISTORY_ENDPOINT,
+      params: {
+        target: job.domain,
+        date: periodSnapshotDate(),
+        history_grouping: 'monthly',
+      },
+      fields: REFDOMAINS_HISTORY_FIELDS,
+      expectedRows: 12,
+      ttlSec: BACKLINKS_TTL_SEC,
+      cap: job.cap,
+    });
+    const rows = extractRowArray(data);
+    const last = rows[rows.length - 1] ?? {};
+    return {
+      refdomainsNew: this.int(last.new ?? last.refdomains_new),
+      refdomainsLost: this.int(last.lost ?? last.refdomains_lost),
+      unitsSpent,
+      cached,
+    };
+  }
+
+  /**
+   * SpamScore (SS) ประมาณการ — ไม่ใช่ metric Ahrefs. ยิง site-explorer/refdomains (DR ราย
+   * referring domain) แล้วคำนวณ % ของ refdomains ที่ DR ต่ำ (≤ SPAM_DR_THRESHOLD) = สัญญาณ
+   * link คุณภาพต่ำ. flag-gated โดย caller. best-effort: error โยนกลับให้ caller จับ (degrade null).
+   */
+  async fetchSpamEstimate(job: SiteEnrichJobData): Promise<SpamEstimateResult> {
+    const { data, unitsSpent, cached } = await this.ahrefs.fetch({
+      projectId: job.projectId,
+      endpoint: REFDOMAINS_ENDPOINT,
+      params: {
+        target: job.domain,
+        date: periodSnapshotDate(),
+        order_by: 'domain_rating:asc',
+      },
+      fields: REFDOMAINS_FIELDS,
+      expectedRows: SPAM_SAMPLE_LIMIT,
+      ttlSec: BACKLINKS_TTL_SEC,
+      cap: job.cap,
+    });
+    const rows = extractRowArray(data);
+    if (rows.length === 0) return { spamScore: null, unitsSpent, cached };
+    const low = rows.filter(
+      (r) => (this.int(r.domain_rating) ?? 0) <= SPAM_DR_THRESHOLD,
+    ).length;
+    const spamScore = Math.round((low / rows.length) * 100);
+    return { spamScore, unitsSpent, cached };
+  }
+
+  /**
+   * enrichPage — วิเคราะห์เชิงลึก "รายหน้า" (ปุ่ม on-demand บน page detail). orchestrate Ahrefs
+   * ระดับ URL ตามลำดับ (แต่ละ call ผ่านงบ/cache/rate ครบ):
+   *   1) organic-keywords (target=url, mode=exact) → page_keywords ของ URL นี้
+   *   2) backlinks (target=url, pageId) → backlink_snapshots ราย URL (UR/refdomains) + DR (domain)
+   *   3) primary keyword (top by traffic) → serp-overview → serp_results (คู่แข่งบน SERP)
+   * คืน summary รวม unitsSpent/cached ให้ api อ่านผ่าน GET enrich/:jobId.
+   */
+  async enrichPage(job: PageEnrichJobData): Promise<PageEnrichSummary> {
+    // 1) organic ราย URL (mode=exact) — ranking + per-keyword traffic/value ของหน้านี้
+    const organic = await this.enrichOrganicKeywords({
+      projectId: job.projectId,
+      domain: job.domain,
+      country: job.country,
+      limit: job.limit,
+      cap: job.cap,
+      target: job.url,
+      mode: 'exact',
+    });
+
+    // 2) backlinks ราย URL — เขียน backlink_snapshots(pageId) (UR/refdomains) + DR ระดับ domain
+    const backlinks = await this.fetchBacklinks({
+      projectId: job.projectId,
+      domain: job.domain,
+      country: job.country,
+      cap: job.cap,
+      target: job.url,
+      pageId: job.pageId,
+    });
+
+    // 3) SERP ของ primary keyword (ทราฟฟิกมากสุดของหน้านี้) → คู่แข่งบน SERP
+    const primaryKeyword = await this.repo.getPrimaryKeyword(job.pageId);
+    let serpInserted = 0;
+    let serpUnits = 0;
+    let serpCached = true;
+    if (primaryKeyword) {
+      const serp = await this.fetchSerpOverview({
+        projectId: job.projectId,
+        keyword: primaryKeyword,
+        country: job.country,
+        limit: PAGE_SERP_LIMIT,
+        cap: job.cap,
+      });
+      serpInserted = serp.serpInserted;
+      serpUnits = serp.unitsSpent;
+      serpCached = serp.cached;
+    }
+
+    const unitsSpent = organic.unitsSpent + backlinks.unitsSpent + serpUnits;
+    const cached = organic.cached && backlinks.cached && serpCached;
+    const summary: PageEnrichSummary = {
+      projectId: job.projectId,
+      pageId: job.pageId,
+      url: job.url,
+      organicFetched: organic.fetched,
+      pageKeywordsInserted: organic.pageKeywordsInserted,
+      domainRating: backlinks.domainRating,
+      urlRating: backlinks.urlRating,
+      referringDomains: backlinks.referringDomains,
+      primaryKeyword,
+      serpInserted,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `page-enrich#${job.projectId} page=${job.pageId} ${job.url} → org=${organic.fetched} pk=${organic.pageKeywordsInserted} DR=${backlinks.domainRating} UR=${backlinks.urlRating} refdom=${backlinks.referringDomains} serp=${serpInserted} units=${unitsSpent} cached=${cached}`,
+    );
+    return summary;
+  }
+
+  /**
+   * enrichSite — ดึง Ahrefs ระดับโดเมน (ปุ่ม "ดึงข้อมูลเว็บ" บน dashboard). orchestrate
+   * 2 ขั้น (แต่ละ call ผ่านงบ/cache/rate ครบ):
+   *   1) backlinks (domain) → backlink_snapshots (pageId null) = DR/refdomains ระดับโดเมน
+   *   2) competitors (domain) → competitors (คู่แข่ง organic)
+   * organic ของเว็บ (traffic/keywords) มาจาก auto-chain เดิม (enrich-organic) ไม่ทำซ้ำที่นี่.
+   */
+  async enrichSite(job: SiteEnrichJobData): Promise<SiteEnrichSummary> {
+    const backlinks = await this.fetchBacklinks({
+      projectId: job.projectId,
+      domain: job.domain,
+      country: job.country,
+      cap: job.cap,
+    });
+    const competitors = await this.enrichCompetitors({
+      projectId: job.projectId,
+      domain: job.domain,
+      country: job.country,
+      limit: job.competitorsLimit,
+      cap: job.cap,
+    });
+
+    const unitsSpent = backlinks.unitsSpent + competitors.unitsSpent;
+    const cached = backlinks.cached && competitors.cached;
+    const summary: SiteEnrichSummary = {
+      projectId: job.projectId,
+      domain: job.domain,
+      domainRating: backlinks.domainRating,
+      referringDomains: backlinks.referringDomains,
+      competitorsUpserted: competitors.competitorsUpserted,
+      unitsSpent,
+      cached,
+    };
+    this.logger.log(
+      `site-enrich#${job.projectId} ${job.domain} → DR=${backlinks.domainRating} refdom=${backlinks.referringDomains} comp=${competitors.competitorsUpserted} units=${unitsSpent} cached=${cached}`,
     );
     return summary;
   }

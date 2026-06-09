@@ -82,3 +82,27 @@ export const backlinksSchema = z.object({
 });
 
 export class BacklinksDto extends createZodDto(backlinksSchema) {}
+
+/**
+ * Body ของ POST /ahrefs/page-enrich — วิเคราะห์เชิงลึกรายหน้า (on-demand บน page detail):
+ * organic-keywords ราย URL (mode=exact) + backlinks ราย URL (UR/refdomains) + serp ของ primary
+ * keyword. pageId required; service resolve url/domain/country เอง (เอกสาร 03a §3/§5/§6).
+ */
+export const pageEnrichSchema = z.object({
+  pageId: z.coerce.number().int().positive(),
+  country: z.string().length(2).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+export class PageEnrichDto extends createZodDto(pageEnrichSchema) {}
+
+/**
+ * Body ของ POST /ahrefs/site-enrich — ดึง Ahrefs ระดับโดเมน (on-demand บน dashboard):
+ * backlinks (DR/refdomains ระดับ domain) + competitors. domain/budget มาจาก project.
+ */
+export const siteEnrichSchema = z.object({
+  country: z.string().length(2).optional(),
+  competitorsLimit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+export class SiteEnrichDto extends createZodDto(siteEnrichSchema) {}

@@ -11,6 +11,37 @@ export const pageRankingSchema = z.object({
   position: z.number().nullable(),
   traffic: z.number().nullable(),
   trafficValue: z.number().nullable(),
+  // metric ของ keyword (join keywords) — เติมจาก Ahrefs enrich; null ถ้ายังไม่ enrich
+  difficulty: z.number().nullable(), // KD 0-100
+  searchVolume: z.number().nullable(),
+  cpc: z.number().nullable(),
+  intent: z.string().nullable(),
+});
+
+/** Page Authority/Backlinks — DR/UR/refdomains (page-level ก่อน, fallback domain) + organic summary. */
+export const pageBacklinksSchema = z.object({
+  scope: z.enum(['page', 'domain']).nullable(), // ที่มาของ DR/UR/refdomains
+  domainRating: z.number().nullable(),
+  urlRating: z.number().nullable(),
+  referringDomains: z.number().nullable(),
+  orgTraffic: z.number().nullable(),
+  orgValue: z.number().nullable(),
+  orgKeywords: z.number().nullable(),
+  capturedAt: z.coerce.string().nullable(),
+});
+
+/** 1 แถว SERP คู่แข่งของ primary keyword (isOwn = หน้าของเราเอง). */
+export const pageSerpRowSchema = z.object({
+  position: z.number(),
+  url: z.string(),
+  domain: z.string(),
+  isOwn: z.boolean(),
+});
+
+/** content gap ที่ผูกกับหน้านี้ (missing subtopic + คู่แข่งที่ทำ). */
+export const pageContentGapSchema = z.object({
+  missingSubtopic: z.string().nullable(),
+  competitorDomains: z.unknown(),
 });
 
 export const pageLinkRowSchema = z.object({
@@ -75,8 +106,11 @@ export const pageDetailSchema = z.object({
   snapshot: pageSnapshotViewSchema.nullable(),
   score: pageScoreViewSchema.nullable(),
   ranking: z.array(pageRankingSchema),
+  backlinks: pageBacklinksSchema.nullable(),
+  serp: z.array(pageSerpRowSchema),
   links: z.array(pageLinkRowSchema),
   images: z.array(pageImageRowSchema),
   findings: z.array(pageFindingSchema),
+  contentGaps: z.array(pageContentGapSchema),
 });
 export class PageDetailDto extends createZodDto(pageDetailSchema) {}

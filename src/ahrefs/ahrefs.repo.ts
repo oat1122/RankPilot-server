@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { DB } from '../db/db.module';
 import type { Db } from '../db/db.module';
 import {
@@ -52,13 +52,23 @@ export interface InsertContentGapInput {
   competitorDomains?: unknown;
 }
 
-/** snapshot DR/UR/refdomains (domain-rating + backlinks-stats → backlink_snapshots — เอกสาร 03a §6). */
+/** snapshot DR/UR/refdomains/backlinks (domain-rating + backlinks-stats → backlink_snapshots — เอกสาร 03a §6). */
 export interface InsertBacklinkSnapshotInput {
   projectId: number;
   pageId?: number | null;
   referringDomains?: number | null;
+  backlinks?: number | null; // BL = total live backlinks (backlinks-stats → metrics.live)
   urlRating?: number | null;
   domainRating?: number | null;
+}
+
+/** 1 keyword ที่เว็บ rank (organic-keywords → keywords×page_keywords) — ตาราง keyword ในรายงานเต็ม. */
+export interface TopKeywordRow {
+  keyword: string;
+  position: number | null;
+  volume: number | null;
+  difficulty: number | null;
+  traffic: number | null;
 }
 
 export interface UpsertCacheInput {
@@ -204,6 +214,105 @@ export class AhrefsRepo {
     return rows[0].id;
   }
 
+  /** url ของหน้า (scope projectId) — null ถ้าไม่พบ/ข้าม tenant (producer ใช้ตั้ง target ราย URL). */
+  async getPage(
+    projectId: number,
+    pageId: number,
+  ): Promise<{ id: number; url: string } | null> {
+    const rows = await this.db
+      .select({ id: pages.id, url: pages.url })
+      .from(pages)
+      .where(and(eq(pages.id, pageId), eq(pages.projectId, projectId)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** keyword ที่หน้านี้ติดอันดับและทราฟฟิกมากสุด (primary) — null ถ้ายังไม่มี ranking. */
+  async getPrimaryKeyword(pageId: number): Promise<string | null> {
+    const rows = await this.db
+      .select({ keyword: keywords.keyword })
+      .from(pageKeywords)
+      .innerJoin(keywords, eq(keywords.id, pageKeywords.keywordId))
+      .where(eq(pageKeywords.pageId, pageId))
+      .orderBy(desc(pageKeywords.traffic))
+      .limit(1);
+    return rows[0]?.keyword ?? null;
+  }
+
+  /** DR/UR/refdomains/backlinks ระดับโดเมนล่าสุด (backlink_snapshots ที่ pageId IS NULL) — null ถ้ายังไม่ enrich. */
+  async getDomainBacklinks(projectId: number): Promise<{
+    domainRating: number | null;
+    urlRating: number | null;
+    referringDomains: number | null;
+    backlinks: number | null;
+    capturedAt: Date;
+  } | null> {
+    const rows = await this.db
+      .select({
+        domainRating: backlinkSnapshots.domainRating,
+        urlRating: backlinkSnapshots.urlRating,
+        referringDomains: backlinkSnapshots.referringDomains,
+        backlinks: backlinkSnapshots.backlinks,
+        capturedAt: backlinkSnapshots.capturedAt,
+      })
+      .from(backlinkSnapshots)
+      .where(
+        and(
+          eq(backlinkSnapshots.projectId, projectId),
+          isNull(backlinkSnapshots.pageId),
+        ),
+      )
+      .orderBy(desc(backlinkSnapshots.capturedAt))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * organic ระดับเว็บ — รวม traffic/value + นับ keyword จาก "row ล่าสุดต่อ (page,keyword)" ของ
+   * page_keywords (กันนับซ้ำข้าม capture) ทุกหน้าใน project.
+   */
+  async getSiteOrganic(
+    projectId: number,
+  ): Promise<{ traffic: number; value: number; keywords: number }> {
+    const latest = this.db
+      .select({ id: sql<number>`max(${pageKeywords.id})` })
+      .from(pageKeywords)
+      .innerJoin(pages, eq(pages.id, pageKeywords.pageId))
+      .where(eq(pages.projectId, projectId))
+      .groupBy(pageKeywords.pageId, pageKeywords.keywordId);
+    const agg = await this.db
+      .select({
+        traffic: sql<string>`coalesce(sum(${pageKeywords.traffic}), 0)`,
+        value: sql<string>`coalesce(sum(${pageKeywords.trafficValue}), 0)`,
+        keywords: sql<number>`count(distinct ${pageKeywords.keywordId})`,
+      })
+      .from(pageKeywords)
+      .where(inArray(pageKeywords.id, latest));
+    const row = agg[0];
+    return {
+      traffic: Number(row?.traffic ?? 0),
+      value: Number(row?.value ?? 0),
+      keywords: Number(row?.keywords ?? 0),
+    };
+  }
+
+  /** คู่แข่ง organic ของ project — รายชื่อโดเมน (limit) + จำนวนทั้งหมด. */
+  async getSiteCompetitors(
+    projectId: number,
+    limit: number,
+  ): Promise<{ domains: string[]; total: number }> {
+    const rows = await this.db
+      .select({ domain: competitors.domain })
+      .from(competitors)
+      .where(eq(competitors.projectId, projectId))
+      .limit(limit);
+    const [{ value }] = await this.db
+      .select({ value: count() })
+      .from(competitors)
+      .where(eq(competitors.projectId, projectId));
+    return { domains: rows.map((r) => r.domain), total: value };
+  }
+
   /** หา pageId จาก urlHash (best-effort match กับหน้าที่ crawl มา) — null ถ้าไม่เจอ. */
   async findPageByUrlHash(
     projectId: number,
@@ -269,8 +378,40 @@ export class AhrefsRepo {
       projectId: input.projectId,
       pageId: input.pageId ?? null,
       referringDomains: input.referringDomains ?? null,
+      backlinks: input.backlinks ?? null,
       urlRating: input.urlRating ?? null,
       domainRating: input.domainRating ?? null,
     });
+  }
+
+  /**
+   * top keyword ที่เว็บ rank อยู่ (ตาราง keyword ในรายงานเต็ม) — row ล่าสุดต่อ (page,keyword)
+   * ของ page_keywords (กันนับซ้ำข้าม capture) join keywords (volume/KD) ทุกหน้าใน project,
+   * เรียง traffic มากก่อน. limit คุมจำนวนแถวที่ส่งให้การ์ด.
+   */
+  async getTopKeywords(
+    projectId: number,
+    limit: number,
+  ): Promise<TopKeywordRow[]> {
+    const latest = this.db
+      .select({ id: sql<number>`max(${pageKeywords.id})` })
+      .from(pageKeywords)
+      .innerJoin(pages, eq(pages.id, pageKeywords.pageId))
+      .where(eq(pages.projectId, projectId))
+      .groupBy(pageKeywords.pageId, pageKeywords.keywordId);
+    const rows = await this.db
+      .select({
+        keyword: keywords.keyword,
+        position: pageKeywords.position,
+        volume: keywords.searchVolume,
+        difficulty: keywords.difficulty,
+        traffic: pageKeywords.traffic,
+      })
+      .from(pageKeywords)
+      .innerJoin(keywords, eq(keywords.id, pageKeywords.keywordId))
+      .where(inArray(pageKeywords.id, latest))
+      .orderBy(desc(pageKeywords.traffic))
+      .limit(limit);
+    return rows;
   }
 }

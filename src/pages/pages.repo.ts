@@ -1,9 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  like,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { DB } from '../db/db.module';
 import type { Db } from '../db/db.module';
 import {
   auditFindings,
+  backlinkSnapshots,
+  contentGaps,
   crawls,
   keywords,
   pageImages,
@@ -11,7 +24,9 @@ import {
   pageLinks,
   pageSnapshots,
   pages,
+  projects,
   seoScores,
+  serpResults,
 } from '../db/schema';
 
 /** ตัวเลือก list pages — crawl ที่เลือก (ไม่ส่ง = ล่าสุด) + paging + ค้นหา url/title. */
@@ -206,6 +221,11 @@ export class PagesRepo {
         position: pageKeywords.position,
         traffic: pageKeywords.traffic,
         trafficValue: pageKeywords.trafficValue,
+        // metric ของ keyword (join keywords) — KD/volume/cpc/intent (เติมจาก Ahrefs enrich)
+        difficulty: keywords.difficulty,
+        searchVolume: keywords.searchVolume,
+        cpc: keywords.cpc,
+        intent: keywords.intent,
       })
       .from(pageKeywords)
       .innerJoin(keywords, eq(keywords.id, pageKeywords.keywordId))
@@ -216,8 +236,12 @@ export class PagesRepo {
       keyword: r.keyword,
       position: r.position,
       traffic: r.traffic,
-      // trafficValue เป็น DECIMAL → mysql2 คืน string → coerce เป็น number (DTO เป็น number)
+      // trafficValue/cpc เป็น DECIMAL → mysql2 คืน string → coerce เป็น number (DTO เป็น number)
       trafficValue: r.trafficValue != null ? Number(r.trafficValue) : null,
+      difficulty: r.difficulty,
+      searchVolume: r.searchVolume,
+      cpc: r.cpc != null ? Number(r.cpc) : null,
+      intent: r.intent,
     }));
 
     const links = snap
@@ -265,6 +289,177 @@ export class PagesRepo {
       .orderBy(desc(auditFindings.impactScore))
       .limit(100);
 
-    return { page, snapshot, score, ranking, links, images, findings };
+    const backlinks = await this.pageBacklinks(projectId, pageId);
+    const projDomain = await this.projectDomain(projectId);
+    const serp = await this.primaryKeywordSerp(pageId, projDomain);
+    const contentGapsOut = await this.pageContentGaps(projectId, pageId);
+
+    return {
+      page,
+      snapshot,
+      score,
+      ranking,
+      backlinks,
+      serp,
+      links,
+      images,
+      findings,
+      contentGaps: contentGapsOut,
+    };
+  }
+
+  /** domain เป้าของ project (ใช้ตัดสิน isOwn ใน SERP) — null ถ้าไม่พบ. */
+  private async projectDomain(projectId: number): Promise<string | null> {
+    const rows = await this.db
+      .select({ domain: projects.domain })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    return rows[0]?.domain ?? null;
+  }
+
+  /**
+   * Page Authority/Backlinks: snapshot DR/UR/refdomains ล่าสุด (page-level ก่อน, fallback
+   * domain-level pageId IS NULL) + organic traffic/value/จำนวน keyword ของหน้านี้ (รวมจาก
+   * "row ล่าสุดต่อ keyword" ของ page_keywords กันนับซ้ำข้าม capture). null ถ้าไม่มีข้อมูลเลย.
+   */
+  private async pageBacklinks(projectId: number, pageId: number) {
+    const cols = {
+      domainRating: backlinkSnapshots.domainRating,
+      urlRating: backlinkSnapshots.urlRating,
+      referringDomains: backlinkSnapshots.referringDomains,
+      capturedAt: backlinkSnapshots.capturedAt,
+    };
+    const pageRows = await this.db
+      .select(cols)
+      .from(backlinkSnapshots)
+      .where(eq(backlinkSnapshots.pageId, pageId))
+      .orderBy(desc(backlinkSnapshots.capturedAt))
+      .limit(1);
+    let scope: 'page' | 'domain' | null = pageRows[0] ? 'page' : null;
+    let row = pageRows[0] ?? null;
+    if (!row) {
+      const domainRows = await this.db
+        .select(cols)
+        .from(backlinkSnapshots)
+        .where(
+          and(
+            eq(backlinkSnapshots.projectId, projectId),
+            isNull(backlinkSnapshots.pageId),
+          ),
+        )
+        .orderBy(desc(backlinkSnapshots.capturedAt))
+        .limit(1);
+      row = domainRows[0] ?? null;
+      scope = row ? 'domain' : null;
+    }
+
+    // organic summary: รวมจาก row ล่าสุดต่อ keyword (MAX(id) GROUP BY keyword_id)
+    const latestPk = this.db
+      .select({ id: sql<number>`max(${pageKeywords.id})` })
+      .from(pageKeywords)
+      .where(eq(pageKeywords.pageId, pageId))
+      .groupBy(pageKeywords.keywordId);
+    const agg = await this.db
+      .select({
+        orgTraffic: sql<string>`coalesce(sum(${pageKeywords.traffic}), 0)`,
+        orgValue: sql<string>`coalesce(sum(${pageKeywords.trafficValue}), 0)`,
+        orgKeywords: count(),
+      })
+      .from(pageKeywords)
+      .where(inArray(pageKeywords.id, latestPk));
+    const orgKeywords = Number(agg[0]?.orgKeywords ?? 0);
+    const hasOrg = orgKeywords > 0;
+
+    if (!row && !hasOrg) return null;
+    return {
+      scope,
+      domainRating: row?.domainRating ?? null,
+      urlRating: row?.urlRating ?? null,
+      referringDomains: row?.referringDomains ?? null,
+      orgTraffic: hasOrg ? Number(agg[0].orgTraffic) : null,
+      orgValue: hasOrg ? Number(agg[0].orgValue) : null,
+      orgKeywords: hasOrg ? orgKeywords : null,
+      capturedAt: row?.capturedAt ?? null,
+    };
+  }
+
+  /**
+   * SERP คู่แข่งของ primary keyword (top by traffic ของหน้านี้) — เอา capture ล่าสุด (≤10 row)
+   * แล้วเรียงตามอันดับ. isOwn = domain ตรงกับ domain ของ project (own page บน SERP).
+   */
+  private async primaryKeywordSerp(pageId: number, projDomain: string | null) {
+    const primary = await this.db
+      .select({ keywordId: pageKeywords.keywordId })
+      .from(pageKeywords)
+      .where(eq(pageKeywords.pageId, pageId))
+      .orderBy(desc(pageKeywords.traffic))
+      .limit(1);
+    const keywordId = primary[0]?.keywordId ?? null;
+    if (keywordId == null) return [];
+
+    // serp_results เป็น time-series → เอา row ใหม่สุดก่อน (capture ล่าสุด ~10 row) แล้ว sort อันดับ
+    const rows = await this.db
+      .select({
+        position: serpResults.position,
+        url: serpResults.url,
+        domain: serpResults.domain,
+      })
+      .from(serpResults)
+      .where(eq(serpResults.keywordId, keywordId))
+      .orderBy(desc(serpResults.capturedAt), asc(serpResults.position))
+      .limit(10);
+    const own = projDomain ? this.normDomain(projDomain) : null;
+    return rows
+      .map((r) => ({
+        position: r.position,
+        url: r.url,
+        domain: r.domain,
+        isOwn: own != null && this.domainMatches(r.domain, own),
+      }))
+      .sort((a, b) => a.position - b.position);
+  }
+
+  /** content gaps ที่ผูกกับหน้านี้ (pageId) หรือ keyword ของหน้า — ≤20 รายการ. */
+  private async pageContentGaps(projectId: number, pageId: number) {
+    const pkRows = await this.db
+      .select({ keywordId: pageKeywords.keywordId })
+      .from(pageKeywords)
+      .where(eq(pageKeywords.pageId, pageId));
+    const keywordIds = [...new Set(pkRows.map((r) => r.keywordId))];
+    const match = keywordIds.length
+      ? or(
+          eq(contentGaps.pageId, pageId),
+          inArray(contentGaps.keywordId, keywordIds),
+        )
+      : eq(contentGaps.pageId, pageId);
+    const rows = await this.db
+      .select({
+        missingSubtopic: contentGaps.missingSubtopic,
+        competitorDomains: contentGaps.competitorDomains,
+      })
+      .from(contentGaps)
+      .where(and(eq(contentGaps.projectId, projectId), match))
+      .orderBy(desc(contentGaps.createdAt))
+      .limit(20);
+    return rows.map((r) => ({
+      missingSubtopic: r.missingSubtopic,
+      competitorDomains: r.competitorDomains,
+    }));
+  }
+
+  /** ตัด protocol/www/trailing slash ออก → เทียบ domain แบบหลวม. */
+  private normDomain(d: string): string {
+    return d
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase();
+  }
+
+  /** serp domain ตรงกับ own ไหม (equal หรือ subdomain ของ own). */
+  private domainMatches(serpDomain: string, own: string): boolean {
+    const d = this.normDomain(serpDomain);
+    return d === own || d.endsWith(`.${own}`);
   }
 }

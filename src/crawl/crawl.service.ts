@@ -59,8 +59,20 @@ export class CrawlService implements OnModuleInit {
     return this.add('crawl-url', { url: dto.url, projectId: dto.projectId });
   }
 
-  /** site crawl ทั้งเว็บ (POST /projects/:id/crawls) — worker discover sitemap+BFS แล้ว persist ทุกหน้า. */
+  /**
+   * site crawl ทั้งเว็บ (POST /projects/:id/crawls) — worker discover sitemap+BFS แล้ว persist ทุกหน้า.
+   * ปฏิเสธทันทีถ้า maxPages เกินเพดาน env CRAWLER_SITE_MAX_PAGES (single source of truth ตัวเดียวกับ
+   * GET /config ที่ FE ใช้ตั้ง max ของ input) — เดิม worker clamp เงียบ ๆ ทำให้ค่าที่กรอกกับที่รันจริง
+   * ไม่ตรง; ตรงนี้ตอบ VALIDATION_FAILED พร้อมบอกเพดานชัด ๆ (worker ยัง clamp ซ้ำเป็น defense).
+   */
   enqueueSite(projectId: number, maxPages: number) {
+    const cap = this.config.get<number>('CRAWLER_SITE_MAX_PAGES') ?? 200;
+    if (maxPages > cap)
+      throw new AppException(
+        ErrorCode.VALIDATION_FAILED,
+        `จำนวนหน้าสูงสุดเกินเพดาน — กำหนดได้สูงสุด ${cap} หน้า`,
+        { maxPages, cap },
+      );
     return this.add('site-crawl', { mode: 'site', projectId, maxPages });
   }
 

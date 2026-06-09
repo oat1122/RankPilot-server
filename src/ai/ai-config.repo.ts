@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { AppException, ErrorCode } from '../common/http';
 import { DB } from '../db/db.module';
 import type { Db } from '../db/db.module';
-import { aiSettings, aiSkills } from '../db/schema';
+import { aiRuns, aiSettings, aiSkills, projects, users } from '../db/schema';
 import {
   AiSettingsSchema,
   mergeModelCfg,
@@ -54,6 +55,28 @@ export interface SkillListItem extends Skill {
   id: number;
   projectId: number | null;
   enabled: boolean;
+}
+
+/** filter ของ admin AI usage report (ทุกฟิลด์ optional → ไม่ใส่ = ทั้งหมด). */
+export interface AiUsageFilter {
+  periodFrom?: string; // 'YYYY-MM'
+  periodTo?: string; // 'YYYY-MM'
+  userId?: number; // effective user (user_id หรือ project owner)
+  projectId?: number;
+  model?: string; // reasoner model id
+}
+
+/** 1 แถวสรุป usage: user × model(หลัก=reasoner) × เดือน — token รวมต่อ run (แยกราย role ไม่ได้). */
+export interface AiUsageRow {
+  userId: number | null;
+  email: string | null;
+  period: string; // 'YYYY-MM'
+  model: string; // reasoner model id ของ run ('unknown' ถ้าไม่มี snapshot)
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  runs: number;
+  ownerAttributedRuns: number; // run ที่ user_id เป็น null → attribute ผ่าน project owner
 }
 
 /**
@@ -114,6 +137,50 @@ export class AiConfigRepo {
     return mergeModelCfg(role, await this.getSettings(projectId));
   }
 
+  /** global default settings (projectId IS NULL) — null = ยังไม่ตั้ง (ใช้ DEFAULTS). /ai/settings. */
+  async getGlobalSettings(): Promise<AiSettings | null> {
+    const rows = await this.db
+      .select({ models: aiSettings.models, provider: aiSettings.provider })
+      .from(aiSettings)
+      .where(isNull(aiSettings.projectId))
+      .limit(1);
+    if (!rows.length) return null;
+    const parsed = AiSettingsSchema.safeParse({
+      models: parseJson(rows[0].models) ?? {},
+      provider: parseJson(rows[0].provider) ?? undefined,
+    });
+    return parsed.success ? parsed.data : null;
+  }
+
+  /**
+   * upsert global default (projectId NULL). uniqueIndex บน project_id ไม่ dedupe NULL ใน MariaDB
+   * (หลาย NULL = หลาย row) → onDuplicateKeyUpdate ใช้ไม่ได้ ต้อง manual: มี row → update, ไม่มี → insert.
+   */
+  async upsertGlobalSettings(data: AiSettings): Promise<void> {
+    const existing = await this.db
+      .select({ id: aiSettings.id })
+      .from(aiSettings)
+      .where(isNull(aiSettings.projectId))
+      .limit(1);
+    if (existing.length) {
+      await this.db
+        .update(aiSettings)
+        .set({ models: data.models, provider: data.provider ?? null })
+        .where(eq(aiSettings.id, existing[0].id));
+    } else {
+      await this.db.insert(aiSettings).values({
+        projectId: null,
+        models: data.models,
+        provider: data.provider ?? null,
+      });
+    }
+  }
+
+  /** map role→modelId ของ global default (merge DEFAULTS) — view สำหรับ /ai/settings. */
+  async resolveGlobalModelMap(): Promise<Record<Role, string>> {
+    return resolveMapPure(await this.getGlobalSettings());
+  }
+
   /* ---------- skills ---------- */
 
   /** skill ที่ enabled + (project นี้ หรือ global) + apply กับ node นี้ เรียง priority desc (graph prep). */
@@ -163,8 +230,29 @@ export class AiConfigRepo {
     }));
   }
 
+  /** skill ของ global library เท่านั้น (projectId IS NULL) รวมที่ปิดอยู่ — /ai/skills (admin UI). */
+  async listGlobalSkills(): Promise<SkillListItem[]> {
+    const rows = await this.db
+      .select()
+      .from(aiSkills)
+      .where(isNull(aiSkills.projectId))
+      .orderBy(desc(aiSkills.priority));
+    return rows.map((r) => ({
+      id: r.id,
+      projectId: r.projectId ?? null,
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      body: r.body,
+      appliesTo: toStringArray(r.appliesTo),
+      enabled: r.enabled,
+      priority: r.priority,
+    }));
+  }
+
+  /** สร้าง skill — projectId number = ของ project, null = global library. */
   async createSkill(
-    projectId: number,
+    projectId: number | null,
     input: CreateSkillInput,
   ): Promise<number> {
     const [{ id }] = await this.db
@@ -203,6 +291,61 @@ export class AiConfigRepo {
       .update(aiSkills)
       .set({ enabled })
       .where(eq(aiSkills.id, skillId));
+  }
+
+  /* ---------- usage analytics (admin — Phase 6 AI Settings) ---------- */
+
+  /**
+   * สรุป token usage ต่อ user × model(หลัก) × เดือน จาก ai_runs (admin only).
+   * - "model" = reasoner ของ run (models snapshot) — token เป็นยอดรวมต่อ run แยกราย role ไม่ได้
+   *   ∴ attribute ทั้ง run ให้ reasoner (model หลัก) ไม่ปั้นตัวเลขแยก worker/cheap.
+   * - effective user = COALESCE(user_id, project.owner_id): run เก่าที่ยังไม่มี user_id → owner
+   *   (นับใน ownerAttributedRuns เพื่อให้ FE ติดป้าย "via project owner").
+   */
+  async aiUsage(filter: AiUsageFilter): Promise<AiUsageRow[]> {
+    const effUser = sql<number>`coalesce(${aiRuns.userId}, ${projects.ownerId})`;
+    const period = sql<string>`date_format(${aiRuns.startedAt}, '%Y-%m')`;
+    const model = sql<string>`coalesce(json_unquote(json_extract(${aiRuns.models}, '$.reasoner')), 'unknown')`;
+    const totalTokens = sql<number>`sum(coalesce(${aiRuns.inputTokens}, 0) + coalesce(${aiRuns.outputTokens}, 0))`;
+
+    const conds: SQL[] = [];
+    if (filter.projectId != null)
+      conds.push(eq(aiRuns.projectId, filter.projectId));
+    if (filter.userId != null) conds.push(sql`${effUser} = ${filter.userId}`);
+    if (filter.model) conds.push(sql`${model} = ${filter.model}`);
+    if (filter.periodFrom) conds.push(sql`${period} >= ${filter.periodFrom}`);
+    if (filter.periodTo) conds.push(sql`${period} <= ${filter.periodTo}`);
+
+    const rows = await this.db
+      .select({
+        userId: effUser,
+        email: users.email,
+        period,
+        model,
+        inputTokens: sql<number>`sum(coalesce(${aiRuns.inputTokens}, 0))`,
+        outputTokens: sql<number>`sum(coalesce(${aiRuns.outputTokens}, 0))`,
+        totalTokens,
+        runs: sql<number>`count(*)`,
+        ownerAttributedRuns: sql<number>`sum(case when ${aiRuns.userId} is null then 1 else 0 end)`,
+      })
+      .from(aiRuns)
+      .innerJoin(projects, eq(projects.id, aiRuns.projectId))
+      .leftJoin(users, eq(users.id, effUser))
+      .where(conds.length ? and(...conds) : undefined)
+      .groupBy(effUser, users.email, period, model)
+      .orderBy(desc(totalTokens));
+
+    return rows.map((r) => ({
+      userId: r.userId == null ? null : Number(r.userId),
+      email: r.email ?? null,
+      period: r.period,
+      model: r.model,
+      inputTokens: Number(r.inputTokens),
+      outputTokens: Number(r.outputTokens),
+      totalTokens: Number(r.totalTokens),
+      runs: Number(r.runs),
+      ownerAttributedRuns: Number(r.ownerAttributedRuns),
+    }));
   }
 
   private async assertSkillExists(skillId: number): Promise<void> {

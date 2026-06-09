@@ -407,6 +407,9 @@ export const internalLinkOpportunities = mysqlTable(
 export const aiRuns = mysqlTable('ai_runs', {
   id: pk(),
   projectId: fk('project_id').notNull(),
+  // user ที่สั่งรอบนี้ (producer แนบจาก @CurrentUser ตอน enqueue) → audit usage ต่อคน (Phase 6 AI Settings).
+  // nullable: run เก่าก่อนมีคอลัมน์นี้ = null → analytics fallback attribute ผ่าน projects.owner_id.
+  userId: fk('user_id'),
   pageId: fk('page_id'),
   graph: varchar('graph', { length: 64 }).notNull(), // 'page_audit'
   // snapshot role→modelId ที่ใช้รอบนั้น (เอกสาร 01 / 02 §6) → audit ต้นทุน/คุณภาพย้อนหลัง

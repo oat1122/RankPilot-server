@@ -8,10 +8,18 @@ import type { CrawlResult } from '../crawler/crawler.schema';
 import { AppException, ErrorCode } from '../common/http';
 import { withTimeout } from '../common/with-timeout';
 
-/** payload + ผลของ queue 'crawl' — typed เพื่อให้ job.data/returnvalue ไม่เป็น any.
- *  projectId optional: ถ้ามี worker จะ persist ผลลง DB (เอกสาร 04 §7 step 2). */
-type CrawlJobData = { url: string; projectId?: number };
-type CrawlQueue = Queue<CrawlJobData, CrawlResult>;
+/** payload + ผลของ queue 'crawl' — discriminated union: single-page (เดิม) | site crawl (ใหม่).
+ *  single-page: {url, projectId?}; site: {mode:'site', projectId, maxPages} (BFS+sitemap ทั้งเว็บ). */
+type PageCrawlJobData = { url: string; projectId?: number };
+type SiteCrawlJobData = { mode: 'site'; projectId: number; maxPages: number };
+type CrawlJobData = PageCrawlJobData | SiteCrawlJobData;
+/** site crawl คืนสรุป (job.returnvalue) แทน CrawlResult; FE poll อ่านแค่ state. */
+type SiteCrawlSummary = {
+  crawlId: number;
+  pagesDiscovered: number;
+  pagesCrawled: number;
+};
+type CrawlQueue = Queue<CrawlJobData, CrawlResult | SiteCrawlSummary>;
 
 /** throttle log queue 'error' — ioredis retry ถี่ตอน Redis ล่ม ไม่งั้น log ท่วม */
 const QUEUE_ERROR_LOG_THROTTLE_MS = 10_000;
@@ -46,24 +54,31 @@ export class CrawlService implements OnModuleInit {
     });
   }
 
-  async enqueue(dto: CreateCrawlDto) {
-    // api แค่ตั้งงาน — worker (process แยก) เป็นคน crawl จริง (เอกสาร 00 §4).
-    // ⚠️ ต้องมี worker รันอยู่ (`npm run start:worker:dev`) ไม่งั้น job ค้าง state=waiting
-    //    ตลอด → FE poll GET /crawls/:id ไม่จบ.
-    // ครอบ timeout ∵ ตอน Redis ล่ม queue.add() จะค้าง (offline-queue) ไม่ reject เอง →
-    //    ตอบ 503 เร็ว ๆ แทนปล่อย request ค้างจน client abort (~15s).
+  /** single-page crawl (POST /crawls) — เดิม. */
+  enqueue(dto: CreateCrawlDto) {
+    return this.add('crawl-url', { url: dto.url, projectId: dto.projectId });
+  }
+
+  /** site crawl ทั้งเว็บ (POST /projects/:id/crawls) — worker discover sitemap+BFS แล้ว persist ทุกหน้า. */
+  enqueueSite(projectId: number, maxPages: number) {
+    return this.add('site-crawl', { mode: 'site', projectId, maxPages });
+  }
+
+  /**
+   * เพิ่ม job เข้า queue 'crawl' + ครอบ timeout — api แค่ตั้งงาน, worker (process แยก) ทำจริง (เอกสาร 00 §4).
+   * ⚠️ ต้องมี worker รันอยู่ (`npm run start:worker:dev`) ไม่งั้น job ค้าง state=waiting ตลอด.
+   * timeout ∵ ตอน Redis ล่ม queue.add() ค้าง (offline-queue) ไม่ reject เอง → ตอบ 503 เร็วแทนปล่อยค้าง.
+   */
+  private async add(name: string, data: CrawlJobData) {
     const timeoutMs =
       this.config.get<number>('QUEUE_ENQUEUE_TIMEOUT_MS') ?? 5000;
     try {
-      const job = await withTimeout(
-        this.queue.add('crawl-url', { url: dto.url, projectId: dto.projectId }),
-        timeoutMs,
-      );
+      const job = await withTimeout(this.queue.add(name, data), timeoutMs);
       return { jobId: job.id, status: 'queued' as const };
     } catch (err) {
       const reason =
         err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      this.logger.error(`enqueue crawl failed: ${reason}`);
+      this.logger.error(`enqueue ${name} failed: ${reason}`);
       throw new AppException(
         ErrorCode.SERVICE_UNAVAILABLE,
         'ตั้งคิว crawl ไม่สำเร็จ (queue ไม่พร้อม) — โปรดลองใหม่อีกครั้ง',
@@ -82,7 +97,7 @@ export class CrawlService implements OnModuleInit {
     const state = await job.getState();
     return {
       jobId: job.id,
-      url: job.data.url ?? null,
+      url: 'url' in job.data ? (job.data.url ?? null) : null,
       state, // waiting | active | completed | failed | delayed
       result: state === 'completed' ? job.returnvalue : null,
       failedReason: state === 'failed' ? job.failedReason : null,

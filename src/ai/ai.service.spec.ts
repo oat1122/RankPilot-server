@@ -76,3 +76,34 @@ describe('AiService.review (HITL resume enqueue)', () => {
     expect(add).not.toHaveBeenCalled();
   });
 });
+
+describe('AiService.enqueue (userId snapshot ลง ai_runs)', () => {
+  // acceptance: ใครสั่ง audit ต้องถูกบันทึก → usage analytics ต่อคนได้ (Phase 6 AI Settings).
+  it('แนบ userId (จาก @CurrentUser) ลง job data ของทุกเพจที่ fan-out', async () => {
+    const addBulk = jest.fn().mockResolvedValue([{ id: 'j1' }, { id: 'j2' }]);
+    const queue = { on: jest.fn(), addBulk };
+    const cfg: Record<string, unknown> = { QUEUE_ENQUEUE_TIMEOUT_MS: 5000 };
+    const config = { get: (k: string) => cfg[k] } as unknown as ConfigService;
+    const repo = {
+      projectExists: jest.fn().mockResolvedValue(true),
+      latestCrawlId: jest.fn().mockResolvedValue(9),
+      pageIdsForCrawl: jest.fn().mockResolvedValue([5, 6]),
+    };
+    const service = new AiService(
+      queue as unknown as ConstructorParameters<typeof AiService>[0],
+      config,
+      repo as unknown as AiRepo,
+    );
+
+    await service.enqueue(1, {}, 77);
+
+    expect(addBulk).toHaveBeenCalledTimes(1);
+    const [jobs] = addBulk.mock.calls[0] as [
+      Array<{ name: string; data: Record<string, unknown> }>,
+    ];
+    expect(jobs).toHaveLength(2);
+    for (const j of jobs)
+      expect(j.data).toMatchObject({ projectId: 1, crawlId: 9, userId: 77 });
+    expect(jobs.map((j) => j.data.pageId)).toEqual([5, 6]);
+  });
+});

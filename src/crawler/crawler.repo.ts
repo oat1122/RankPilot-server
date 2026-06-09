@@ -8,6 +8,7 @@ import {
   pageLinks,
   pageSnapshots,
   pages,
+  projects,
 } from '../db/schema';
 import { normalizeUrl, urlHash, urlHashOrNull } from '../common/url';
 import type { CrawlImage, CrawlResult } from './crawler.schema';
@@ -50,39 +51,48 @@ export class CrawlerRepo {
   }
 
   /**
-   * persist 1 หน้าแบบ atomic ใน transaction: upsert page → snapshot(+storage key +CWV) → images
-   * → links → ปิด crawl (done/partial). ครอบ tx → พังกลางทาง rollback ทั้งชุด กัน partial write
-   * ตอน BullMQ retry (attempts:2). คืน {pageId, snapshotId}.
+   * เขียน 1 หน้าใน tx: upsert page → snapshot(+storage key +CWV) → images → links. **ไม่แตะ crawls**.
+   * key หน้าด้วย finalUrl (หลัง follow redirect) ไม่ใช่ url ที่ขอ — flow [2] Ahrefs join ranking ด้วย
+   * best_position_url (= URL หลัง redirect ที่ Google index) ผ่าน url_hash เดียวกัน. ถ้า key ด้วย url
+   * เดิม hash สองฝั่งไม่ตรง → page_keywords ไม่ผูกเข้าหน้า → Analysis ไม่มี ranking signal. (เอกสาร 03 §6)
+   * แชร์โดย persistPage (single-page) + persistPageWithinCrawl (site crawl).
+   */
+  private async writePageTx(
+    tx: Tx,
+    input: PersistPageInput,
+  ): Promise<{ pageId: number; snapshotId: number }> {
+    const pageId = await this.upsertPageTx(
+      tx,
+      input.projectId,
+      input.result.finalUrl,
+    );
+    const snapshotId = await this.insertSnapshotTx(tx, {
+      crawlId: input.crawlId,
+      pageId,
+      result: input.result,
+      htmlStorageKey: input.htmlStorageKey,
+      cwv: input.cwv,
+    });
+    await this.insertImagesTx(tx, snapshotId, input.result.imageRows);
+    await this.insertLinksTx(
+      tx,
+      input.crawlId,
+      input.projectId,
+      pageId,
+      input.result.links,
+    );
+    return { pageId, snapshotId };
+  }
+
+  /**
+   * persist 1 หน้าแบบ atomic + ปิด crawl (done/partial, 1/1) — flow single-page เดิม (POST /crawls).
+   * ครอบ tx → พังกลางทาง rollback ทั้งชุด กัน partial write ตอน BullMQ retry (attempts:2).
    */
   async persistPage(
     input: PersistPageInput,
   ): Promise<{ pageId: number; snapshotId: number }> {
     return this.db.transaction(async (tx) => {
-      const pageId = await this.upsertPageTx(
-        tx,
-        input.projectId,
-        // key หน้าด้วย finalUrl (หลัง follow redirect) ไม่ใช่ url ที่ขอ — flow [2] Ahrefs join
-        // ranking ด้วย best_position_url (= canonical/URL หลัง redirect ที่ Google index) ผ่าน
-        // url_hash เดียวกัน. ถ้า key ด้วย url เดิม (ก่อน redirect) hash สองฝั่งไม่ตรง →
-        // page_keywords ไม่ผูกเข้าหน้า → stage [3] Analysis ไม่มี ranking signal (keywordCoverage
-        // เป็น null + impact ไม่ถ่วง traffic ทุกหน้า). เอกสาร 03 §6 / common/url.ts header.
-        input.result.finalUrl,
-      );
-      const snapshotId = await this.insertSnapshotTx(tx, {
-        crawlId: input.crawlId,
-        pageId,
-        result: input.result,
-        htmlStorageKey: input.htmlStorageKey,
-        cwv: input.cwv,
-      });
-      await this.insertImagesTx(tx, snapshotId, input.result.imageRows);
-      await this.insertLinksTx(
-        tx,
-        input.crawlId,
-        input.projectId,
-        pageId,
-        input.result.links,
-      );
+      const ids = await this.writePageTx(tx, input);
       await tx
         .update(crawls)
         .set({
@@ -92,8 +102,48 @@ export class CrawlerRepo {
           finishedAt: new Date(),
         })
         .where(eq(crawls.id, input.crawlId));
-      return { pageId, snapshotId };
+      return ids;
     });
+  }
+
+  /**
+   * persist 1 หน้า "ใต้ crawl ที่เปิดค้างไว้" — **ไม่ปิด crawl** (site crawl เรียกหลายครั้งต่อ crawl
+   * เดียว แล้ว finishCrawl ทีเดียวตอนจบ BFS). atomic ต่อหน้า → พังหน้าเดียว rollback เฉพาะหน้านั้น.
+   */
+  async persistPageWithinCrawl(
+    input: PersistPageInput,
+  ): Promise<{ pageId: number; snapshotId: number }> {
+    return this.db.transaction((tx) => this.writePageTx(tx, input));
+  }
+
+  /** ปิด crawl ของ site flow — ตั้ง status + ตัวนับหน้าตามผล BFS (เรียกครั้งเดียวตอนจบ). */
+  async finishCrawl(
+    crawlId: number,
+    input: {
+      status: 'done' | 'partial' | 'failed';
+      pagesDiscovered: number;
+      pagesCrawled: number;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(crawls)
+      .set({
+        status: input.status,
+        pagesDiscovered: input.pagesDiscovered,
+        pagesCrawled: input.pagesCrawled,
+        finishedAt: new Date(),
+      })
+      .where(eq(crawls.id, crawlId));
+  }
+
+  /** domain (hostname) ของ project — site crawl ใช้ตั้ง seed + ขอบเขต host. null = ไม่พบ. */
+  async projectDomain(projectId: number): Promise<string | null> {
+    const rows = await this.db
+      .select({ domain: projects.domain })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    return rows[0]?.domain ?? null;
   }
 
   /** mark crawl ล้ม (นอก tx — เรียกใน catch ของ processor, best-effort ไม่กลืน error เดิม). */

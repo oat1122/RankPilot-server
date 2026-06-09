@@ -61,7 +61,7 @@ export class AiService implements OnModuleInit {
    * enqueue page-audit: ไม่ระบุ crawlId → crawl ล่าสุด; ไม่ระบุ pageId → ทุกเพจของ crawl
    * (1 job/เพจ ผ่าน addBulk). ตรวจ projectExists ก่อน + withTimeout (ตอบ 503 ถ้า queue ไม่พร้อม).
    */
-  async enqueue(projectId: number, dto: CreateAiAuditDto) {
+  async enqueue(projectId: number, dto: CreateAiAuditDto, userId?: number) {
     if (!(await this.repo.projectExists(projectId)))
       throw new AppException(
         ErrorCode.NOT_FOUND,
@@ -86,7 +86,7 @@ export class AiService implements OnModuleInit {
 
     const jobs = pageIds.map((pageId) => ({
       name: 'audit-page',
-      data: { projectId, pageId, crawlId } satisfies PageAuditJobData,
+      data: { projectId, pageId, crawlId, userId } satisfies PageAuditJobData,
     }));
 
     const timeoutMs =

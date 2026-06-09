@@ -49,6 +49,9 @@ export const envSchema = z.object({
   CRAWLER_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
   CRAWLER_MAX_BYTES: z.coerce.number().int().positive().default(5_000_000),
   CRAWLER_MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(5),
+  // Site crawl (multi-page BFS+sitemap): hard cap ของ maxPages ที่ผู้ใช้กรอก + เพดาน URL จาก sitemap.
+  CRAWLER_SITE_MAX_PAGES: z.coerce.number().int().positive().default(200),
+  CRAWLER_SITEMAP_MAX_URLS: z.coerce.number().int().positive().default(2000),
 
   // HTML snapshot storage — เก็บ raw HTML ของ crawl เป็น .html.gz บน local disk (เอกสาร 05 §0/§4).
   // เลือก disk แทน R2/S3: ไม่มี egress + ไม่ต้องพึ่ง external service/creds. optional + มี default →

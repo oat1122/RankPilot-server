@@ -11,6 +11,8 @@ export interface PageAuditJobData {
   projectId: number;
   pageId: number;
   crawlId?: number;
+  // user ที่สั่ง audit (จาก @CurrentUser ใน controller) → snapshot ลง ai_runs.user_id (usage ต่อคน).
+  userId?: number;
 }
 
 /** payload ของ job 'resume-review' (queue 'ai') — user อนุมัติ/ปฏิเสธใน dashboard (Phase 4). */
@@ -62,6 +64,7 @@ export class AiRunner {
     const models = await this.configRepo.resolveModelMap(job.projectId);
     const runId = await this.repo.createRun({
       projectId: job.projectId,
+      userId: job.userId,
       pageId: job.pageId,
       graph: 'page_audit',
       models,

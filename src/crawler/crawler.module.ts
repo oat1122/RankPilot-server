@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { CrawlerService } from './crawler.service';
 import { CrawlerRepo } from './crawler.repo';
+import { SitemapService } from './sitemap.service';
 import { StorageModule } from '../storage/storage.module';
 import { PsiModule } from '../psi/psi.module';
 
@@ -12,9 +13,15 @@ import { PsiModule } from '../psi/psi.module';
  */
 @Module({
   imports: [HttpModule, StorageModule, PsiModule],
-  providers: [CrawlerService, CrawlerRepo],
+  providers: [CrawlerService, CrawlerRepo, SitemapService],
   // re-export StorageModule/PsiModule → CrawlProcessor (ใน WorkerModule) inject HtmlStorageService/
   // PsiService ได้ผ่านการ import CrawlerModule โมดูลเดียว.
-  exports: [CrawlerService, CrawlerRepo, StorageModule, PsiModule],
+  exports: [
+    CrawlerService,
+    CrawlerRepo,
+    SitemapService,
+    StorageModule,
+    PsiModule,
+  ],
 })
 export class CrawlerModule {}

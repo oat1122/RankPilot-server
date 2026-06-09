@@ -13,6 +13,7 @@ import { HealthModule } from './health/health.module';
 import { UsersModule } from './users/users.module';
 import { ProjectsModule } from './projects/projects.module';
 import { CrawlModule } from './crawl/crawl.module';
+import { PagesModule } from './pages/pages.module';
 import { EnrichModule } from './enrich/enrich.module';
 import { AnalysisModule } from './analysis/analysis.module';
 import { AiModule } from './ai/ai.module';
@@ -50,6 +51,8 @@ import { TrendsModule } from './trends/trends.module';
     // Projects (@Global) — list/detail/create + ProjectAccessGuard ที่ domain อื่น reuse (เอกสาร 01 §2)
     ProjectsModule,
     CrawlModule,
+    // Pages (read-only) — list หน้าที่ crawl มา + page detail สำหรับ dashboard ใหม่
+    PagesModule,
     // Ahrefs Enrichment [2] (producer) — POST/GET /projects/:id/ahrefs/* (เอกสาร 03)
     EnrichModule,
     // Analysis [3] (producer) — POST/GET /projects/:id/analysis/* (เอกสาร 04 §7)

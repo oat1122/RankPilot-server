@@ -90,3 +90,43 @@ export class SkillsListDto extends createZodDto(skillsListSchema) {}
 /** POST skills — id ที่สร้าง. */
 export const skillCreatedSchema = z.object({ id: z.number() });
 export class SkillCreatedDto extends createZodDto(skillCreatedSchema) {}
+
+/* ---------- usage analytics (admin — Phase 6 AI Settings) ---------- */
+
+const periodRe = /^\d{4}-\d{2}$/;
+
+/** GET /ai/usage query — filter usage report (ทุกฟิลด์ optional → ไม่ใส่ = ทั้งหมด). */
+export const aiUsageQuerySchema = z.object({
+  periodFrom: z.string().regex(periodRe, 'period = YYYY-MM').optional(),
+  periodTo: z.string().regex(periodRe, 'period = YYYY-MM').optional(),
+  userId: z.coerce.number().int().positive().optional(),
+  projectId: z.coerce.number().int().positive().optional(),
+  model: z.string().min(1).max(160).optional(),
+});
+export class AiUsageQueryDto extends createZodDto(aiUsageQuerySchema) {}
+
+/** 1 แถวสรุป: user × model(หลัก=reasoner) × เดือน. */
+export const aiUsageRowSchema = z.object({
+  userId: z.number().nullable(),
+  email: z.string().nullable(),
+  period: z.string(), // YYYY-MM
+  model: z.string(), // reasoner model id
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  totalTokens: z.number(),
+  runs: z.number(),
+  ownerAttributedRuns: z.number(),
+});
+
+/** GET /ai/usage response — รายการ + ยอดรวม. */
+export const aiUsageSchema = z.object({
+  items: z.array(aiUsageRowSchema),
+  totals: z.object({
+    totalTokens: z.number(),
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    runs: z.number(),
+    users: z.number(),
+  }),
+});
+export class AiUsageDto extends createZodDto(aiUsageSchema) {}

@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApiEnvelopeResponse, ApiStandardErrorResponses } from '../common/http';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthUser } from '../auth/auth-user';
 import { ProjectAccessGuard } from '../projects/project-access.guard';
 import {
   CreateAiAuditDto,
@@ -61,8 +63,9 @@ export class AiController {
   audit(
     @Param('projectId', ParseIntPipe) projectId: number,
     @Body() dto: CreateAiAuditDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.ai.enqueue(projectId, dto);
+    return this.ai.enqueue(projectId, dto, user.id);
   }
 
   @Get('recommendations')

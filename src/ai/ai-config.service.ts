@@ -5,7 +5,11 @@ import { firstValueFrom } from 'rxjs';
 import type { AxiosResponse } from 'axios';
 import { AppException, ErrorCode } from '../common/http';
 import { AiConfigRepo } from './ai-config.repo';
-import type { CreateSkillInput, UpdateSkillInput } from './ai-config.repo';
+import type {
+  AiUsageFilter,
+  CreateSkillInput,
+  UpdateSkillInput,
+} from './ai-config.repo';
 import type { AiSettings } from './llm/settings';
 
 /** cache รายการ model ของ OpenRouter (เอกสาร 02 §3 — 1 ชั่วโมง). */
@@ -94,14 +98,38 @@ export class AiConfigService {
     return this.getSettings(projectId);
   }
 
+  /** global default settings (projectId NULL) + map role→modelId — /ai/settings (admin UI). */
+  async getGlobalSettings() {
+    const [settings, modelMap] = await Promise.all([
+      this.repo.getGlobalSettings(),
+      this.repo.resolveGlobalModelMap(),
+    ]);
+    return { settings, modelMap };
+  }
+
+  async putGlobalSettings(dto: AiSettings) {
+    await this.repo.upsertGlobalSettings(dto);
+    return this.getGlobalSettings();
+  }
+
   /* ---------- skills ---------- */
 
   async listSkills(projectId: number) {
     return { items: await this.repo.listSkills(projectId) };
   }
 
+  /** global library skills (projectId NULL) รวมที่ปิดอยู่ — /ai/skills (admin UI). */
+  async listGlobalSkills() {
+    return { items: await this.repo.listGlobalSkills() };
+  }
+
   async createSkill(projectId: number, dto: CreateSkillInput) {
     return { id: await this.repo.createSkill(projectId, dto) };
+  }
+
+  /** สร้าง global skill (projectId NULL) — /ai/skills (admin). */
+  async createGlobalSkill(dto: CreateSkillInput) {
+    return { id: await this.repo.createSkill(null, dto) };
   }
 
   /** patch skill — throw AI_SKILL_NOT_FOUND ถ้าไม่มี (จาก repo). */
@@ -113,5 +141,26 @@ export class AiConfigService {
   async toggleSkill(skillId: number, enabled: boolean) {
     await this.repo.toggleSkill(skillId, enabled);
     return { id: skillId };
+  }
+
+  /* ---------- usage analytics (admin) ---------- */
+
+  /** สรุป token usage ต่อ user × model × เดือน + ยอดรวม (admin only — Phase 6 AI Settings). */
+  async aiUsage(filter: AiUsageFilter) {
+    const items = await this.repo.aiUsage(filter);
+    const totals = items.reduce(
+      (acc, r) => ({
+        totalTokens: acc.totalTokens + r.totalTokens,
+        inputTokens: acc.inputTokens + r.inputTokens,
+        outputTokens: acc.outputTokens + r.outputTokens,
+        runs: acc.runs + r.runs,
+      }),
+      { totalTokens: 0, inputTokens: 0, outputTokens: 0, runs: 0 },
+    );
+    // distinct effective users (fallback key = email เมื่อ userId null) — สรุปจำนวนคนที่ใช้ AI
+    const users = new Set(
+      items.map((r) => (r.userId != null ? `u:${r.userId}` : `e:${r.email}`)),
+    ).size;
+    return { items, totals: { ...totals, users } };
   }
 }

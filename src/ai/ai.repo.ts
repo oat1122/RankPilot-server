@@ -390,6 +390,7 @@ export class AiRepo {
   /** สร้าง ai_runs (status running) + snapshot role→modelId ที่ใช้ → คืน runId. */
   async createRun(input: {
     projectId: number;
+    userId?: number;
     pageId: number;
     graph: string;
     models: unknown;
@@ -398,6 +399,7 @@ export class AiRepo {
       .insert(aiRuns)
       .values({
         projectId: input.projectId,
+        userId: input.userId ?? null,
         pageId: input.pageId,
         graph: input.graph,
         models: input.models,
